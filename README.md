@@ -38,7 +38,7 @@ A simple, fast, and intuitive Terminal User Interface (TUI) for Google Tasks.
     pip install -r requirements.txt
     ```
 
-4.  **Enable the Google Tasks API and download your `client_secrets.json` file:**
+4.  **Enable the Google Tasks API [Guide](https://developers.google.com/workspace/tasks/quickstart/python)**
 
     *   Go to the [Google API Console](https://console.developers.google.com/).
     *   Create a new project.
@@ -82,7 +82,7 @@ tasks-tui
 | `[X]`             | Task completed                                                                           |
 | `('Task Counts')` | Count of tasks/subtasks within (subtasks of subtasks do not display in web Google Tasks) |
 
-When you run the application for the first time, it will open a web browser and ask you to authorize the application to access your Google Tasks. After you authorize the application, it will create a `token.json` file in the `~/.gtask` directory. This file contains your access and refresh tokens, so you won't have to authorize the application every time you run it.
+When you run the application for the first time, it will open a web browser and ask you to authorize the application to access your Google Tasks. After you authorize the application, it will create a `token.json` file in the `~/.gtask` directory. This file contains your access and refresh tokens, so you won't have to authorize the application every time you run it. (Occasionally your token might become expire, so just delete `token.json` from `~/.gtask` and rerun the application to reauthenticate!)
 
 ## Contributing
 
