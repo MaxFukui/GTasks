@@ -26,11 +26,19 @@ def get_credentials():
     _ensure_dir_exists()
     creds = None
     if os.path.exists(TOKEN_PATH):
-        creds = google.oauth2.credentials.Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        try:
+            creds = google.oauth2.credentials.Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        except Exception as e:
+            print(f"Error loading token.json: {e}. Initiating full re-authentication.")
+            creds = None
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                print(f"Token refresh failed: {e}. Initiating full re-authentication.")
+                creds = None
+        if not creds:
             flow = InstalledAppFlow.from_client_secrets_file(
                 CLIENT_SECRETS_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
