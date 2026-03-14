@@ -5,6 +5,7 @@
 from unicurses import *
 from .task_service import TaskService
 from .ui_manager import UIManager
+from . import local_storage
 import sys
 from dateutil.parser import ParserError, isoparse
 import os
@@ -61,11 +62,17 @@ class AppState:
     def __init__(self, task_service):
         self.service = task_service
         self.task_lists = self.service.get_task_lists()
-        self.active_list_id = self.service.active_list_id
+
+        config = local_storage.load_config()
+        self.active_list_id = (
+            config.get("active_list_id") or self.service.active_list_id
+        )
+        self.service.set_active_list(self.active_list_id)
+
         self.current_parent_task_id = None
         self.filtered_tasks_cache = {}  # Cache for filtered tasks
         self.task_counts = {}
-        self.hide_completed = False
+        self.hide_completed = config.get("hide_completed", False)
         self.tasks = self.get_tasks_for_active_list()
         self.list_buffer = ""
         self.task_buffer = ""
@@ -73,7 +80,14 @@ class AppState:
         self.parent_task_idx_stack = []
         self.calculate_task_counts()
         self.show_help = False
-        self.hide_completed = False
+
+    def save_config(self):
+        """Saves current configuration to disk."""
+        config = {
+            "hide_completed": self.hide_completed,
+            "active_list_id": self.active_list_id,
+        }
+        local_storage.save_config(config)
 
     def calculate_task_counts(self):
         """Calculates the number of tasks in each list."""
@@ -114,6 +128,7 @@ class AppState:
             self.active_list_id = list_id
             self.current_parent_task_id = None
             self.tasks = self.get_tasks_for_active_list()
+            self.save_config()
             return True
         return False
 
@@ -333,6 +348,7 @@ def handle_input(stdscr, app_state, ui_manager):
             and len(app_state.tasks) > 0
         ):
             ui_manager.selected_task_idx = len(app_state.tasks) - 1
+        app_state.save_config()
 
     elif key == ord("m"):
         if ui_manager.active_panel == "tasks" and app_state.tasks:
