@@ -106,6 +106,7 @@ class UIManager:
             ("p", "Paste Task/List"),
             ("o", "Open Task"),
             ("f", "Toggle Hide Done"),
+            ("m", "Move Task"),
             ("?", "Help Toggle"),
         ]
 
@@ -282,6 +283,58 @@ class UIManager:
         # Clear the line
         mvwaddstr(self.stdscr, h - 2, 1, " " * (len(message) + 1))
         refresh()
+
+    def show_list_selector(self, task_lists, active_list_id):
+        """Shows a modal to select a task list for moving a task."""
+        available_lists = [lst for lst in task_lists if lst["id"] != active_list_id]
+
+        if not available_lists:
+            return None
+
+        selected_idx = 0
+
+        while True:
+            h, w = getmaxyx(self.stdscr)
+            modal_h = len(available_lists) + 4
+            modal_w = max(30, w // 3)
+            modal_y = (h - modal_h) // 2
+            modal_x = (w - modal_w) // 2
+
+            modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
+            werase(modal_win)
+            wborder(modal_win)
+            mvwaddstr(modal_win, 0, 2, " Move to: ", color_pair(3) | A_BOLD)
+
+            for idx, lst in enumerate(available_lists):
+                y_pos = idx + 1
+                if idx == selected_idx:
+                    mvwaddstr(
+                        modal_win,
+                        y_pos,
+                        1,
+                        f"> {lst.get('title', 'Untitled')}",
+                        color_pair(5),
+                    )
+                else:
+                    mvwaddstr(modal_win, y_pos, 1, f"  {lst.get('title', 'Untitled')}")
+
+            mvwaddstr(modal_win, modal_h - 2, 1, "[Enter] select  [Esc] cancel", A_DIM)
+            wrefresh(modal_win)
+
+            key = wgetch(modal_win)
+
+            if key == KEY_UP or key == ord("k"):
+                selected_idx = max(0, selected_idx - 1)
+            elif key == KEY_DOWN or key == ord("j"):
+                selected_idx = min(len(available_lists) - 1, selected_idx + 1)
+            elif key in [ord("\n"), ord("\r"), KEY_ENTER]:
+                delwin(modal_win)
+                return available_lists[selected_idx]["id"]
+            elif key in [27, ord("q"), ord("c")]:  # Escape
+                delwin(modal_win)
+                return None
+
+            delwin(modal_win)
 
     def _sync_animation(self):
         """The actual animation loop to be run in a thread."""

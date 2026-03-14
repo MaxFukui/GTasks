@@ -314,6 +314,29 @@ def handle_input(stdscr, app_state, ui_manager):
         ):
             ui_manager.selected_task_idx = len(app_state.tasks) - 1
 
+    elif key == ord("m"):
+        if ui_manager.active_panel == "tasks" and app_state.tasks:
+            target_list_id = ui_manager.show_list_selector(
+                app_state.task_lists, app_state.active_list_id
+            )
+            if target_list_id:
+                selected_task = app_state.tasks[ui_manager.selected_task_idx]
+                app_state.service.move_task(
+                    app_state.active_list_id,
+                    target_list_id,
+                    selected_task["id"],
+                )
+                app_state.refresh_data()
+                target_list_title = next(
+                    (
+                        lst["title"]
+                        for lst in app_state.task_lists
+                        if lst["id"] == target_list_id
+                    ),
+                    "unknown",
+                )
+                ui_manager.show_temporary_message(f"Moved to '{target_list_title}'")
+
     return True  # Keep the loop running
 
 
