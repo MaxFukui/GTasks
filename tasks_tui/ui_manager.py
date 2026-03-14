@@ -52,6 +52,8 @@ class UIManager:
         parent_ids=None,
         children_counts=None,
         hide_completed=False,
+        selected_task=None,
+        subtasks=None,
     ):
         h, w = getmaxyx(self.stdscr)
 
@@ -61,11 +63,20 @@ class UIManager:
         )  # Lists take up at least 25 chars or 1/4th of the screen
         task_width = w - list_width
 
+        # Determine if we need a subtask panel
+        subtask_panel_height = 0
+        if subtasks and len(subtasks) > 0:
+            subtask_panel_height = min(len(subtasks) + 2, h // 3)
+
         # 2. Create window objects
         # Lists Window (Left Panel)
-        list_win = newwin(h, list_width, 0, 0)
+        list_win = newwin(h - subtask_panel_height, list_width, 0, 0)
         # Tasks Window (Right Panel)
-        task_win = newwin(h, task_width, 0, list_width)
+        task_win = newwin(h - subtask_panel_height, task_width, 0, list_width)
+        # Subtasks Panel (Bottom)
+        subtask_win = None
+        if subtask_panel_height > 0:
+            subtask_win = newwin(subtask_panel_height, w, h - subtask_panel_height, 0)
 
         # 3. Draw content inside the windows
         self._draw_list_panel(list_win, lists, active_list_id, task_counts)
@@ -73,9 +84,15 @@ class UIManager:
             task_win, tasks, parent_task, parent_ids, children_counts, hide_completed
         )
 
+        # Draw subtask panel if available
+        if subtask_win:
+            self._draw_subtask_panel(subtask_win, subtasks, selected_task)
+
         # 4. Refresh all windows
         wrefresh(list_win)
         wrefresh(task_win)
+        if subtask_win:
+            wrefresh(subtask_win)
 
         if self.show_help:
             self._draw_help_panel(self.active_panel)
@@ -225,6 +242,27 @@ class UIManager:
         # Draw hide_completed indicator
         filter_text = "[f] show done" if hide_completed else "[f] hide done"
         mvwaddstr(win, max_y - 1, max_x - 15, filter_text, A_DIM)
+
+    def _draw_subtask_panel(self, win, subtasks, selected_task):
+        """Draws the subtasks panel at the bottom."""
+        werase(win)
+        title = (
+            f"Subtasks: {selected_task.get('title', 'Unknown')}"
+            if selected_task
+            else "Subtasks"
+        )
+        self._draw_border(win, title)
+        max_y, max_x = getmaxyx(win)
+
+        for idx, task in enumerate(subtasks):
+            task_title = task.get("title", "Untitled Task")
+            status = task.get("status", "needsAction")
+
+            symbol = "[X]" if status == "completed" else "[ ]"
+            attr = color_pair(2) if status == "completed" else A_NORMAL
+
+            display_line = f"  {symbol} {task_title}"
+            mvwaddstr(win, idx + 1, 1, display_line[: max_x - 2], attr)
 
     def update_task_selection(self, tasks, direction):
         """Moves the task selection cursor (up/down)."""

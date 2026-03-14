@@ -461,6 +461,24 @@ def main_loop(stdscr):
                 app_state.active_list_id
             )
 
+            # Get subtasks for selected task (for bottom panel)
+            selected_task = None
+            subtasks = []
+            if (
+                ui_manager.active_panel == "tasks"
+                and app_state.tasks
+                and ui_manager.selected_task_idx < len(app_state.tasks)
+            ):
+                selected_task = app_state.tasks[ui_manager.selected_task_idx]
+                if selected_task:
+                    subtask_ids = app_state.service.get_children_counts(
+                        app_state.active_list_id
+                    )
+                    if selected_task.get("id") in parent_ids:
+                        subtasks = app_state.service.get_subtasks(
+                            app_state.active_list_id, selected_task["id"]
+                        )
+
             ui_manager.draw_layout(
                 app_state.task_lists,
                 app_state.tasks,
@@ -470,6 +488,8 @@ def main_loop(stdscr):
                 parent_ids=parent_ids,
                 children_counts=children_counts,
                 hide_completed=app_state.hide_completed,
+                selected_task=selected_task,
+                subtasks=subtasks,
             )
         except Exception as e:
             # Handles window resize errors gracefully
