@@ -131,7 +131,7 @@ class AppState:
         self.tasks = self.get_tasks_for_active_list()
         self.calculate_task_counts()
 
-    def move_list_up(self, list_idx):
+    def move_list_up(self, list_idx, ui_manager):
         """Moves a list up in the order."""
         if list_idx > 0:
             self.list_order[list_idx], self.list_order[list_idx - 1] = (
@@ -140,9 +140,10 @@ class AppState:
             )
             self.service.set_list_order(self.list_order)
             self.task_lists = self.service.get_task_lists(self.list_order)
+            ui_manager.selected_list_idx = list_idx - 1
             self.save_config()
 
-    def move_list_down(self, list_idx):
+    def move_list_down(self, list_idx, ui_manager):
         """Moves a list down in the order."""
         if list_idx < len(self.list_order) - 1:
             self.list_order[list_idx], self.list_order[list_idx + 1] = (
@@ -151,6 +152,7 @@ class AppState:
             )
             self.service.set_list_order(self.list_order)
             self.task_lists = self.service.get_task_lists(self.list_order)
+            ui_manager.selected_list_idx = list_idx + 1
             self.save_config()
 
     def reset_list_order(self):
@@ -247,9 +249,9 @@ def handle_input(stdscr, app_state, ui_manager):
     # List reordering (only in lists panel)
     elif ui_manager.active_panel == "lists" and app_state.task_lists:
         if key == ord(","):
-            app_state.move_list_up(ui_manager.selected_list_idx)
+            app_state.move_list_up(ui_manager.selected_list_idx, ui_manager)
         elif key == ord("."):
-            app_state.move_list_down(ui_manager.selected_list_idx)
+            app_state.move_list_down(ui_manager.selected_list_idx, ui_manager)
         elif key == ord("s"):
             app_state.reset_list_order()
             ui_manager.show_temporary_message("List order reset to original")
