@@ -65,6 +65,7 @@ class AppState:
         self.current_parent_task_id = None
         self.filtered_tasks_cache = {}  # Cache for filtered tasks
         self.task_counts = {}
+        self.hide_completed = False
         self.tasks = self.get_tasks_for_active_list()
         self.list_buffer = ""
         self.task_buffer = ""
