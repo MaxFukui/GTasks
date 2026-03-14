@@ -249,9 +249,9 @@ def handle_input(stdscr, app_state, ui_manager):
     # List reordering (only in lists panel)
     elif ui_manager.active_panel == "lists" and app_state.task_lists:
         if key == ord(","):
-            app_state.move_list_up(ui_manager.selected_list_idx, ui_manager)
-        elif key == ord("."):
             app_state.move_list_down(ui_manager.selected_list_idx, ui_manager)
+        elif key == ord("."):
+            app_state.move_list_up(ui_manager.selected_list_idx, ui_manager)
         elif key == ord("s"):
             app_state.reset_list_order()
             ui_manager.show_temporary_message("List order reset to original")
