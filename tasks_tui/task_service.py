@@ -51,11 +51,23 @@ class TaskService:
         local_storage.save_data(self.data)
         self.dirty = False
 
-    def get_task_lists(self):
+    def get_task_lists(self, list_order=None):
         """Fetches all available task lists from the local cache."""
-        return [
+        lists = [
             lst for lst in self.data.get("task_lists", []) if not lst.get("deleted")
         ]
+
+        if list_order:
+
+            def sort_key(lst):
+                lst_id = lst.get("id", "")
+                if lst_id in list_order:
+                    return list_order.index(lst_id)
+                return len(list_order)  # Unknown lists go to the end
+
+            lists.sort(key=sort_key)
+
+        return lists
 
     def get_tasks_for_list(self, list_id=None):
         """Fetches all tasks for the specified list from the local cache."""
@@ -316,6 +328,14 @@ class TaskService:
         """Changes the task list currently being viewed."""
         self.active_list_id = list_id
         return True
+
+    def set_list_order(self, list_order):
+        """Updates the list order."""
+        self.list_order = list_order
+
+    def get_list_order(self):
+        """Returns the current list order."""
+        return getattr(self, "list_order", [])
 
     def add_list(self, list_name):
         """Adds a new list to the local cache."""

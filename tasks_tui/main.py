@@ -61,13 +61,21 @@ class AppState:
 
     def __init__(self, task_service):
         self.service = task_service
-        self.task_lists = self.service.get_task_lists()
 
         config = local_storage.load_config()
         self.active_list_id = (
             config.get("active_list_id") or self.service.active_list_id
         )
         self.service.set_active_list(self.active_list_id)
+
+        self.list_order = config.get("list_order", [])
+        if not self.list_order:
+            self.list_order = [
+                lst["id"] for lst in self.service.data.get("task_lists", [])
+            ]
+        self.service.set_list_order(self.list_order)
+
+        self.task_lists = self.service.get_task_lists(self.list_order)
 
         self.current_parent_task_id = None
         self.filtered_tasks_cache = {}  # Cache for filtered tasks
@@ -86,6 +94,7 @@ class AppState:
         config = {
             "hide_completed": self.hide_completed,
             "active_list_id": self.active_list_id,
+            "list_order": self.list_order,
         }
         local_storage.save_config(config)
 
@@ -117,10 +126,39 @@ class AppState:
 
     def refresh_data(self):
         """Refreshes all data from the service layer and clears the cache."""
-        self.task_lists = self.service.get_task_lists()
+        self.task_lists = self.service.get_task_lists(self.list_order)
         self.filtered_tasks_cache.clear()  # Invalidate the cache
         self.tasks = self.get_tasks_for_active_list()
         self.calculate_task_counts()
+
+    def move_list_up(self, list_idx):
+        """Moves a list up in the order."""
+        if list_idx > 0:
+            self.list_order[list_idx], self.list_order[list_idx - 1] = (
+                self.list_order[list_idx - 1],
+                self.list_order[list_idx],
+            )
+            self.service.set_list_order(self.list_order)
+            self.task_lists = self.service.get_task_lists(self.list_order)
+            self.save_config()
+
+    def move_list_down(self, list_idx):
+        """Moves a list down in the order."""
+        if list_idx < len(self.list_order) - 1:
+            self.list_order[list_idx], self.list_order[list_idx + 1] = (
+                self.list_order[list_idx + 1],
+                self.list_order[list_idx],
+            )
+            self.service.set_list_order(self.list_order)
+            self.task_lists = self.service.get_task_lists(self.list_order)
+            self.save_config()
+
+    def reset_list_order(self):
+        """Resets list order to original Google order."""
+        self.list_order = [lst["id"] for lst in self.service.data.get("task_lists", [])]
+        self.service.set_list_order(self.list_order)
+        self.task_lists = self.service.get_task_lists(self.list_order)
+        self.save_config()
 
     def change_active_list(self, list_id):
         """Updates the active list and fetches new tasks, using the cache."""
@@ -206,6 +244,16 @@ def handle_input(stdscr, app_state, ui_manager):
             app_state.refresh_data()
             ui_manager.selected_task_idx = 0
 
+    # List reordering (only in lists panel)
+    elif ui_manager.active_panel == "lists" and app_state.task_lists:
+        if key == ord(","):
+            app_state.move_list_up(ui_manager.selected_list_idx)
+        elif key == ord("."):
+            app_state.move_list_down(ui_manager.selected_list_idx)
+        elif key == ord("s"):
+            app_state.reset_list_order()
+            ui_manager.show_temporary_message("List order reset to original")
+
     # Action Keys
 
     elif key == ord("c"):
@@ -275,7 +323,9 @@ def handle_input(stdscr, app_state, ui_manager):
             if confirm.lower() == "y":
                 app_state.list_buffer = selected_list["title"]
                 app_state.service.delete_list(selected_list["id"])
-                app_state.task_lists = app_state.service.get_task_lists()
+                app_state.task_lists = app_state.service.get_task_lists(
+                    app_state.list_order
+                )
                 if app_state.task_lists:
                     app_state.change_active_list(app_state.task_lists[0]["id"])
                 else:

@@ -89,6 +89,9 @@ class UIManager:
                 ("q", "Quit and Sync"),
                 ("w", "Write and Sync"),
                 ("h/j/k/l", "Select List"),
+                (",", "Move Up"),
+                (".", "Move Down"),
+                ("s", "Reset Order"),
                 ("r", "Rename List"),
                 ("d", "Delete List"),
                 ("p", "Paste List"),
@@ -153,7 +156,7 @@ class UIManager:
                 attr |= color_pair(5)
 
             mvwaddstr(win, y_pos, 1, f"{display_title:<{max_x - 2}}", attr)
-            mvwaddstr(win, max_y - 1, max_x - 10, "(?) Help", A_DIM)
+            mvwaddstr(win, max_y - 1, 1, "[,] up [.] down [s] reset", A_DIM)
 
     def _draw_task_panel(
         self,

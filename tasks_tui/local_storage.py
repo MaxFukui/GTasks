@@ -44,12 +44,12 @@ def load_config():
     """Loads user configuration from the local JSON config file."""
     _ensure_dir_exists()
     if not os.path.exists(CONFIG_FILE):
-        return {"hide_completed": False, "active_list_id": None}
+        return {"hide_completed": False, "active_list_id": None, "list_order": []}
     try:
         with open(CONFIG_FILE, "r") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
-        return {"hide_completed": False, "active_list_id": None}
+        return {"hide_completed": False, "active_list_id": None, "list_order": []}
 
 
 def save_config(config):
