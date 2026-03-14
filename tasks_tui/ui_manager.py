@@ -8,20 +8,23 @@ from dateutil.parser import isoparse
 import time
 import threading
 
+
 class UIManager:
     """
     Manages the curses screen layout and drawing.
     """
+
     def __init__(self, stdscr):
         self.stdscr = stdscr
         self.setup_colors()
-        self.active_panel = "lists" # 'lists' or 'tasks'
+        self.active_panel = "lists"  # 'lists' or 'tasks'
         self.selected_list_idx = 0
         self.selected_task_idx = 0
         self.syncing = False
         self.animation_thread = None
         self.show_help = False
         self.animation_frame = ""
+        self.hide_completed = False
 
     def setup_colors(self):
         """Initializes color pairs for the TUI."""
@@ -29,9 +32,9 @@ class UIManager:
         start_color()
         init_pair(1, COLOR_BLACK, COLOR_WHITE)  # Highlight
         init_pair(2, COLOR_GREEN, COLOR_BLACK)  # Completed
-        init_pair(3, COLOR_CYAN, COLOR_BLACK)   # Header
-        init_pair(4, COLOR_YELLOW, COLOR_BLACK) # Active List
-        init_pair(5, COLOR_BLUE, COLOR_BLACK)   # Selected
+        init_pair(3, COLOR_CYAN, COLOR_BLACK)  # Header
+        init_pair(4, COLOR_YELLOW, COLOR_BLACK)  # Active List
+        init_pair(5, COLOR_BLUE, COLOR_BLACK)  # Selected
 
     def _draw_border(self, win, title):
         """Draws a simple box border and title."""
@@ -39,11 +42,23 @@ class UIManager:
         title_str = f" {title} "
         mvwaddstr(win, 0, 2, title_str, color_pair(3) | A_BOLD)
 
-    def draw_layout(self, lists, tasks, active_list_id, task_counts, parent_task=None, parent_ids=None, children_counts=None):
+    def draw_layout(
+        self,
+        lists,
+        tasks,
+        active_list_id,
+        task_counts,
+        parent_task=None,
+        parent_ids=None,
+        children_counts=None,
+        hide_completed=False,
+    ):
         h, w = getmaxyx(self.stdscr)
 
         # 1. Calculate window sizes
-        list_width = max(25, w // 4) # Lists take up at least 25 chars or 1/4th of the screen
+        list_width = max(
+            25, w // 4
+        )  # Lists take up at least 25 chars or 1/4th of the screen
         task_width = w - list_width
 
         # 2. Create window objects
@@ -54,7 +69,9 @@ class UIManager:
 
         # 3. Draw content inside the windows
         self._draw_list_panel(list_win, lists, active_list_id, task_counts)
-        self._draw_task_panel(task_win, tasks, parent_task, parent_ids, children_counts)
+        self._draw_task_panel(
+            task_win, tasks, parent_task, parent_ids, children_counts, hide_completed
+        )
 
         # 4. Refresh all windows
         wrefresh(list_win)
@@ -88,6 +105,7 @@ class UIManager:
             ("d", "Delete Task/List"),
             ("p", "Paste Task/List"),
             ("o", "Open Task"),
+            ("f", "Toggle Hide Done"),
             ("?", "Help Toggle"),
         ]
 
@@ -109,23 +127,30 @@ class UIManager:
             display_title = f"{list_title} ({task_count})"
 
             is_active = list_item["id"] == active_list_id
-            is_selected = self.active_panel == 'lists' and idx == self.selected_list_idx
-            y_pos = idx + 1 # Start drawing content on line 1
+            is_selected = self.active_panel == "lists" and idx == self.selected_list_idx
+            y_pos = idx + 1  # Start drawing content on line 1
 
             if y_pos >= max_y - 1:
-                break # Avoid drawing off the screen
+                break  # Avoid drawing off the screen
 
             attr = A_NORMAL
             if is_active:
-                attr |= color_pair(4) # Yellow for the currently loaded list
+                attr |= color_pair(4)  # Yellow for the currently loaded list
             if is_selected:
                 attr |= color_pair(5)
 
-            mvwaddstr(win, y_pos, 1, f"{display_title:<{max_x-2}}", attr)
+            mvwaddstr(win, y_pos, 1, f"{display_title:<{max_x - 2}}", attr)
             mvwaddstr(win, max_y - 1, max_x - 10, "(?) Help", A_DIM)
 
-
-    def _draw_task_panel(self, win, tasks, parent_task=None, parent_ids=None, children_counts=None):
+    def _draw_task_panel(
+        self,
+        win,
+        tasks,
+        parent_task=None,
+        parent_ids=None,
+        children_counts=None,
+        hide_completed=False,
+    ):
         """Draws the individual Tasks."""
         werase(win)
         title = f"Tasks in {parent_task['title']}" if parent_task else "Tasks"
@@ -134,23 +159,22 @@ class UIManager:
 
         if parent_ids is None:
             parent_ids = set()
-        
+
         if children_counts is None:
             children_counts = {}
 
         if not tasks:
-            attr = color_pair(5) if self.active_panel == 'tasks' else A_DIM
+            attr = color_pair(5) if self.active_panel == "tasks" else A_DIM
             mvwaddstr(win, 1, 2, "No tasks in this list.", attr)
-            return
 
         for idx, task in enumerate(tasks):
             task_title = task.get("title", "Untitled Task")
             status = task.get("status", "needsAction")
-            is_selected = self.active_panel == 'tasks' and idx == self.selected_task_idx
-            y_pos = idx + 1 # Start drawing content on line 1
+            is_selected = self.active_panel == "tasks" and idx == self.selected_task_idx
+            y_pos = idx + 1  # Start drawing content on line 1
 
             if y_pos >= max_y - 2:
-                break # Avoid drawing off the screen
+                break  # Avoid drawing off the screen
 
             attr = A_NORMAL
             symbol = "[ ]"
@@ -173,16 +197,22 @@ class UIManager:
                     due_date_str = " (Invalid Date)"
 
             note_indicator = "*" if "notes" in task and task["notes"] else " "
-            children_count = children_counts.get(task['id'], 0)
-            has_children_indicator = f" ({children_count})" if children_count > 0 else ""
+            children_count = children_counts.get(task["id"], 0)
+            has_children_indicator = (
+                f" ({children_count})" if children_count > 0 else ""
+            )
 
             display_line = f"{symbol} {note_indicator}{task_title}{due_date_str}{has_children_indicator}"
             # Truncate if too long, ensuring space for selection highlight
-            mvwaddstr(win, y_pos, 1, display_line[:max_x - 2], attr)
+            mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
+
+        # Draw hide_completed indicator
+        filter_text = "[f] show done" if hide_completed else "[f] hide done"
+        mvwaddstr(win, max_y - 1, max_x - 15, filter_text, A_DIM)
 
     def update_task_selection(self, tasks, direction):
         """Moves the task selection cursor (up/down)."""
-        if self.active_panel != 'tasks' or not tasks:
+        if self.active_panel != "tasks" or not tasks:
             return
 
         max_idx = len(tasks) - 1
@@ -197,7 +227,7 @@ class UIManager:
 
     def update_list_selection(self, lists, direction):
         """Moves the list selection cursor (up/down)."""
-        if self.active_panel != 'lists' or not lists:
+        if self.active_panel != "lists" or not lists:
             return
 
         max_idx = len(lists) - 1
@@ -212,7 +242,7 @@ class UIManager:
 
     def toggle_panel(self):
         """Switches between the list panel and the task panel."""
-        self.active_panel = 'tasks' if self.active_panel == 'lists' else 'lists'
+        self.active_panel = "tasks" if self.active_panel == "lists" else "lists"
 
     def toggle_help(self):
         """Toggles the help display."""
@@ -241,7 +271,7 @@ class UIManager:
             delwin(input_win)
 
         if isinstance(input_string, bytes):
-            return input_string.decode('utf-8')
+            return input_string.decode("utf-8")
         return input_string
 
     def show_temporary_message(self, message):
@@ -280,5 +310,5 @@ class UIManager:
             self.animation_thread.join()
             nodelay(self.stdscr, False)
             h, w = getmaxyx(self.stdscr)
-            mvwaddstr(self.stdscr, h - 2, 1, " " * (w - 2)) # Clear the line
+            mvwaddstr(self.stdscr, h - 2, 1, " " * (w - 2))  # Clear the line
             refresh()
