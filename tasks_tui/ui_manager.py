@@ -78,37 +78,49 @@ class UIManager:
         wrefresh(task_win)
 
         if self.show_help:
-            self._draw_help_panel()
+            self._draw_help_panel(self.active_panel)
 
-        doupdate()
-
-    def _draw_help_panel(self):
-        """Draws a help panel with controls."""
+    def _draw_help_panel(self, active_panel):
+        """Draws a help panel with controls specific to the active panel."""
         h, w = getmaxyx(self.stdscr)
-        help_h = 15
+
+        if active_panel == "lists":
+            controls = [
+                ("q", "Quit and Sync"),
+                ("w", "Write and Sync"),
+                ("h/j/k/l", "Select List"),
+                ("r", "Rename List"),
+                ("d", "Delete List"),
+                ("p", "Paste List"),
+                ("o", "New List"),
+                ("?", "Close Help"),
+            ]
+        else:
+            controls = [
+                ("q", "Quit and Sync"),
+                ("w", "Write and Sync"),
+                ("h/j/k/l", "Select Task"),
+                ("c", "Toggle Complete"),
+                ("r", "Rename Task"),
+                ("a", "Add Due Date"),
+                ("i", "Edit Notes"),
+                ("d", "Delete Task"),
+                ("p", "Paste Task"),
+                ("o", "New Task"),
+                ("f", "Toggle Hide Done"),
+                ("m", "Move Task"),
+                ("?", "Close Help"),
+            ]
+
+        help_h = len(controls) + 4
         help_w = 60
         help_y = (h - help_h) // 2
         help_x = (w - help_w) // 2
 
         help_win = newwin(help_h, help_w, help_y, help_x)
         werase(help_win)
-        self._draw_border(help_win, "Help (?)")
-
-        controls = [
-            ("q", "Quit and Sync"),
-            ("w", "Write and Sync"),
-            ("h/j/k/l", "Select List/Task/Subtask"),
-            ("c", "Complete Toggle"),
-            ("r", "Rename Task/List"),
-            ("a", "Add Due Date"),
-            ("i", "Insert Note"),
-            ("d", "Delete Task/List"),
-            ("p", "Paste Task/List"),
-            ("o", "Open Task"),
-            ("f", "Toggle Hide Done"),
-            ("m", "Move Task"),
-            ("?", "Help Toggle"),
-        ]
+        title = "Help - Lists" if active_panel == "lists" else "Help - Tasks"
+        self._draw_border(help_win, title)
 
         for i, (key, desc) in enumerate(controls):
             mvwaddstr(help_win, i + 1, 2, f"{key:<20} {desc}")

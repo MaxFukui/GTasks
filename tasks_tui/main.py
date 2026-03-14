@@ -138,6 +138,25 @@ def handle_input(stdscr, app_state, ui_manager):
     if key == KEY_RESIZE:
         return True  # Triggers a redraw
 
+    # Block action keys when help is shown (only allow ?, q, or arrows to close)
+    if ui_manager.show_help:
+        if key == ord("?"):
+            ui_manager.toggle_help()
+        elif key not in [
+            ord("q"),
+            ord("Q"),
+            KEY_UP,
+            KEY_DOWN,
+            KEY_LEFT,
+            KEY_RIGHT,
+            ord("k"),
+            ord("j"),
+            ord("h"),
+            ord("l"),
+        ]:
+            return True
+        # Let other keys pass through for navigation
+
     # Movement
     elif key == KEY_UP or key == ord("k"):
         if ui_manager.active_panel == "tasks":
