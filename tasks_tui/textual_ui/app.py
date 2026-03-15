@@ -99,24 +99,82 @@ class GTasksApp(App):
 
     # Action placeholders - to be implemented
     def action_new_item(self):
-        pass
+        """Create new task or list based on focused panel."""
+        screen = self.screen
+        if not hasattr(screen, "list_panel") or not hasattr(screen, "task_panel"):
+            return
+
+        if screen.list_panel.has_focus:
+            # Create new list - use Input dialog (placeholder for now)
+            # For now, just add a new list with a default name
+            new_list = self.service.add_list("New List")
+            screen.list_panel.refresh_list_items()
+        elif screen.task_panel.has_focus:
+            # Create new task
+            if self.active_list_id:
+                new_task = self.service.add_task(self.active_list_id, "New Task")
+                screen.task_panel.refresh_task_items()
 
     def action_rename(self):
         pass
 
-    def action_delete(self):
-        pass
-
     def action_toggle_complete(self):
-        pass
+        """Toggle task completion status."""
+        screen = self.screen
+        if not hasattr(screen, "task_panel"):
+            return
+
+        task_panel = screen.task_panel
+        if task_panel.index is None:
+            return
+
+        tasks = task_panel.items
+        if task_panel.index >= len(tasks):
+            return
+
+        task_id = task_panel.index[task_panel.index].id
+
+        self.service.toggle_task_status(self.active_list_id, task_id)
+        task_panel.refresh_task_items()
+
+    def action_delete(self):
+        """Delete selected task or list."""
+        screen = self.screen
+        if not hasattr(screen, "list_panel") or not hasattr(screen, "task_panel"):
+            return
+
+        # Check if we're in list or task panel
+        if screen.list_panel.has_focus:
+            # Delete list
+            list_panel = screen.list_panel
+            if list_panel.index is None:
+                return
+
+            list_id = list_panel.index[list_panel.index].id
+            if list_id:
+                self.service.delete_list(list_id)
+                screen.list_panel.refresh_list_items()
+        elif screen.task_panel.has_focus:
+            # Delete task
+            task_panel = screen.task_panel
+            if task_panel.index is None:
+                return
+
+            task_id = task_panel.index[task_panel.index].id
+            if task_id:
+                self.service.delete_task(self.active_list_id, task_id)
+                task_panel.refresh_task_items()
 
     def action_set_due_date(self):
+        """Set due date for selected task (placeholder)."""
         pass
 
     def action_paste(self):
+        """Paste task/list (placeholder)."""
         pass
 
     def action_move_task(self):
+        """Move task to another list (placeholder)."""
         pass
 
 
