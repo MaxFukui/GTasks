@@ -1,7 +1,6 @@
 # task_panel.py - Right panel showing tasks for active list
 from textual.widgets import ListView, ListItem, Static
 from textual.message import Message
-from textual.reactive import reactive
 from dateutil.parser import isoparse
 
 
@@ -25,20 +24,9 @@ class TaskActionRequested(Message):
 class TaskPanel(ListView):
     """Panel displaying tasks for the active list."""
 
-    active_list_id = reactive[str | None](None)
-    hide_completed = reactive[bool](False)
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.id = "task-panel"
-
-    def watch_active_list_id(self, active_list_id: str | None):
-        """React to active list changes."""
-        self.refresh_task_items()
-
-    def watch_hide_completed(self, hide_completed: bool):
-        """React to hide_completed changes."""
-        self.refresh_task_items()
 
     def on_mount(self):
         """Called when widget is mounted."""
@@ -48,19 +36,20 @@ class TaskPanel(ListView):
         """Refresh the task items from the service."""
         self.clear()
 
-        if not self.active_list_id:
+        active_list_id = self.app.active_list_id
+        if not active_list_id:
             return
 
         service = self.app.service
-        tasks = service.get_tasks_for_list(self.active_list_id)
+        tasks = service.get_tasks_for_list(active_list_id)
 
         # Filter completed if hide_completed is True
-        if self.hide_completed:
+        if self.app.hide_completed:
             tasks = [t for t in tasks if t.get("status") != "completed"]
 
         # Get parent task IDs and children counts
-        parent_ids = service.get_parent_task_ids(self.active_list_id)
-        children_counts = service.get_children_counts(self.active_list_id)
+        parent_ids = service.get_parent_task_ids(active_list_id)
+        children_counts = service.get_children_counts(active_list_id)
 
         for task in tasks:
             task_id = task.get("id", "")

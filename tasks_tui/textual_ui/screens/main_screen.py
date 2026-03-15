@@ -1,6 +1,7 @@
 # main_screen.py - Main screen composing all panels
 from textual.screen import Screen
 from textual.containers import Horizontal, Vertical
+from textual import on
 
 from tasks_tui.textual_ui.widgets.list_panel import ListPanel, ListSelected
 from tasks_tui.textual_ui.widgets.task_panel import TaskPanel, TaskSelected
@@ -9,6 +10,13 @@ from tasks_tui.textual_ui.widgets.subtask_panel import SubtaskPanel
 
 class MainScreen(Screen):
     """Main screen with three-panel layout."""
+
+    BINDINGS = [
+        ("h", "focus_left", "Left"),
+        ("l", "focus_right", "Right"),
+        ("j", "focus_down", "Down"),
+        ("k", "focus_up", "Up"),
+    ]
 
     def __init__(self):
         super().__init__()
@@ -26,26 +34,36 @@ class MainScreen(Screen):
 
     def on_mount(self):
         """Called when screen is mounted."""
-        # Set initial reactive values from app
-        app = self.app
-        self.list_panel.active_list_id = app.active_list_id
-        self.task_panel.active_list_id = app.active_list_id
-        self.task_panel.hide_completed = app.hide_completed
-        self.subtask_panel.active_list_id = app.active_list_id
-        self.subtask_panel.selected_task_id = app.selected_task_id
+        # Focus the list panel by default
+        self.list_panel.focus()
 
     def on_list_selected(self, event: ListSelected):
         """Handle list selection."""
         self.app.active_list_id = event.list_id
-        self.task_panel.active_list_id = event.list_id
-        self.subtask_panel.active_list_id = event.list_id
-        # Save config
+        self.task_panel.refresh_task_items()
+        self.subtask_panel.refresh_subtask_items()
         self.save_config()
 
     def on_task_selected(self, event: TaskSelected):
         """Handle task selection."""
         self.app.selected_task_id = event.task_id
-        self.subtask_panel.selected_task_id = event.task_id
+        self.subtask_panel.refresh_subtask_items()
+
+    def action_focus_left(self):
+        """Move focus to the left panel."""
+        self.list_panel.focus()
+
+    def action_focus_right(self):
+        """Move focus to the right panel."""
+        self.task_panel.focus()
+
+    def action_focus_down(self):
+        """Move focus down in current panel."""
+        self.focused.scroll_down()
+
+    def action_focus_up(self):
+        """Move focus up in current panel."""
+        self.focused.scroll_up()
 
     def save_config(self):
         """Save configuration."""
@@ -57,14 +75,3 @@ class MainScreen(Screen):
             "list_order": getattr(self.app.service, "list_order", []),
         }
         local_storage.save_config(config)
-
-    def watch_app_active_list_id(self, active_list_id):
-        """React to active list changes from app."""
-        self.list_panel.active_list_id = active_list_id
-        self.task_panel.active_list_id = active_list_id
-        self.subtask_panel.active_list_id = active_list_id
-
-    def watch_app_hide_completed(self, hide_completed):
-        """React to hide_completed changes from app."""
-        self.task_panel.hide_completed = hide_completed
-        self.task_panel.refresh_task_items()

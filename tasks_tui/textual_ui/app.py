@@ -71,6 +71,12 @@ class GTasksApp(App):
     def action_toggle_hide_completed(self):
         """Toggle hiding completed tasks."""
         self.hide_completed = not self.hide_completed
+
+        # Refresh the task panel
+        screen = self.screen
+        if hasattr(screen, "task_panel"):
+            screen.task_panel.refresh_task_items()
+
         # Save config
         config = {
             "hide_completed": self.hide_completed,
