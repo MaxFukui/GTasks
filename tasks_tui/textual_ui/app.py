@@ -63,10 +63,22 @@ class GTasksApp(App):
             self.service.sync_to_google()
         self.exit()
 
+    def on_exit(self):
+        """Called when app exits."""
+        if self.service.dirty:
+            self.service.sync_to_google()
+
     def action_sync(self):
         """Sync with Google."""
         self.service.sync_to_google()
-        self.refresh()
+        # Refresh all panels
+        screen = self.screen
+        if hasattr(screen, "list_panel"):
+            screen.list_panel.refresh_list_items()
+        if hasattr(screen, "task_panel"):
+            screen.task_panel.refresh_task_items()
+        if hasattr(screen, "subtask_panel"):
+            screen.subtask_panel.refresh_subtask_items()
 
     def action_toggle_hide_completed(self):
         """Toggle hiding completed tasks."""
