@@ -19,7 +19,9 @@ classifiers = [
 dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
-    "google-auth-httplib2", # This line MUST NOT have a comma at the end!
+    "google-auth-httplib2",
+    "uni-curses",
+    "python-dateutil",
 ]
 
 [project.scripts]

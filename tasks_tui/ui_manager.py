@@ -39,11 +39,11 @@ class UIManager:
         init_pair(7, COLOR_CYAN, COLOR_BLACK)  # Subtask text
         init_pair(8, COLOR_WHITE, COLOR_BLUE)  # Subtask completed
 
-    def _draw_border(self, win, title):
-        """Draws a simple box border and title."""
-        wborder(win)
+    def _draw_border(self, win, title, color_pair_idx=3):
+        """Draws a box border and title with optional color."""
+        box(win, 0, 0)
         title_str = f" {title} "
-        mvwaddstr(win, 0, 2, title_str, color_pair(3) | A_BOLD)
+        mvwaddstr(win, 0, 2, title_str, color_pair(color_pair_idx) | A_BOLD)
 
     def draw_layout(
         self,
@@ -153,7 +153,9 @@ class UIManager:
     def _draw_list_panel(self, win, lists, active_list_id, task_counts):
         """Draws the Task List titles."""
         werase(win)
-        self._draw_border(win, "Lists")
+        # Use color 4 (yellow) if lists panel is active, else color 3 (cyan)
+        border_color = 4 if self.active_panel == "lists" else 3
+        self._draw_border(win, "Lists", border_color)
         max_y, max_x = getmaxyx(win)
 
         for idx, list_item in enumerate(lists):
@@ -190,7 +192,9 @@ class UIManager:
         """Draws the individual Tasks."""
         werase(win)
         title = f"Tasks in {parent_task['title']}" if parent_task else "Tasks"
-        self._draw_border(win, title)
+        # Use color 4 (yellow) if tasks panel is active, else color 3 (cyan)
+        border_color = 4 if self.active_panel == "tasks" else 3
+        self._draw_border(win, title, border_color)
         max_y, max_x = getmaxyx(win)
 
         if parent_ids is None:
