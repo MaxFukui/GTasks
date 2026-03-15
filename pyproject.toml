@@ -22,11 +22,13 @@ dependencies = [
     "google-auth-httplib2",
     "uni-curses",
     "python-dateutil",
+    "textual",
 ]
 
 [project.scripts]
 # This line (tasks-tui = ...) is likely what was failing to parse.
 tasks-tui = "tasks_tui.main:cli"
+tasks-tui-textual = "tasks_tui.textual_ui.app:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
