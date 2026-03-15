@@ -148,7 +148,51 @@ Actions:
                 screen.task_panel.refresh_task_items()
 
     def action_rename(self):
-        pass
+        """Rename selected task or list."""
+        screen = self.screen
+        if not hasattr(screen, "list_panel") or not hasattr(screen, "task_panel"):
+            return
+
+        if screen.list_panel.has_focus:
+            # Rename list
+            list_panel = screen.list_panel
+            if list_panel.index is None:
+                return
+
+            list_id = list_panel.index[list_panel.index].id
+            if list_id:
+                # Get current title
+                lists = self.service.get_task_lists()
+                current_title = ""
+                for lst in lists:
+                    if lst.get("id") == list_id:
+                        current_title = lst.get("title", "")
+                        break
+
+                # Simple rename - for now just notify
+                self.notify(
+                    f"Rename list: {current_title} (not implemented)", timeout=2
+                )
+
+        elif screen.task_panel.has_focus:
+            # Rename task
+            task_panel = screen.task_panel
+            if task_panel.index is None:
+                return
+
+            task_id = task_panel.index[task_panel.index].id
+            if task_id and self.active_list_id:
+                # Get current title
+                tasks = self.service.get_tasks_for_list(self.active_list_id)
+                current_title = ""
+                for task in tasks:
+                    if task.get("id") == task_id:
+                        current_title = task.get("title", "")
+                        break
+
+                self.notify(
+                    f"Rename task: {current_title} (not implemented)", timeout=2
+                )
 
     def action_toggle_complete(self):
         """Toggle task completion status."""
