@@ -1,6 +1,6 @@
 # main_screen.py - Main screen composing all panels
 from textual.screen import Screen
-from textual.containers import Container
+from textual.containers import Horizontal, Vertical
 
 from tasks_tui.textual_ui.widgets.list_panel import ListPanel, ListSelected
 from tasks_tui.textual_ui.widgets.task_panel import TaskPanel, TaskSelected
@@ -18,14 +18,10 @@ class MainScreen(Screen):
 
     def compose(self):
         """Create the layout."""
-        # Main container with list and task panels
-        main_content = Container(
-            self.list_panel,
-            self.task_panel,
-            id="main-panels",
-        )
+        # Top section: list and task panels side by side
+        top_section = Horizontal(self.list_panel, self.task_panel)
 
-        yield main_content
+        yield top_section
         yield self.subtask_panel
 
     def on_mount(self):

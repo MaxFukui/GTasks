@@ -14,47 +14,6 @@ class GTasksApp(App):
     """Textual-based GTasks application."""
 
     CSS = """
-    Screen {
-        layout: vertical;
-    }
-
-    # main-panels {
-        layout: horizontal;
-        height: 1fr;
-    }
-
-    # list-panel {
-        width: 25%;
-        border: solid $surface;
-    }
-
-    # task-panel {
-        width: 75%;
-        border: solid $surface;
-    }
-
-    # subtask-panel {
-        height: auto;
-        max-height: 8;
-        border: solid $accent;
-    }
-
-    ListView {
-        height: 100%;
-    }
-
-    ListItem {
-        padding: 0 1;
-    }
-
-    .active-list {
-        text-style: bold;
-    }
-
-    .completed-task {
-        color: $text-muted;
-        text-style: dim;
-    }
     """
 
     BINDINGS = [

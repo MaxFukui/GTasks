@@ -1,7 +1,6 @@
 # list_panel.py - Left panel showing task lists
-from textual.widgets import ListView, ListItem
+from textual.widgets import ListView, ListItem, Static
 from textual.message import Message
-from textual.reactive import reactive
 
 
 class ListSelected(Message):
@@ -24,15 +23,9 @@ class ListReorderRequested(Message):
 class ListPanel(ListView):
     """Panel displaying all task lists."""
 
-    active_list_id = reactive[str | None](None)
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.id = "list-panel"
-
-    def watch_active_list_id(self, active_list_id: str | None):
-        """React to active list changes."""
-        self.refresh_list_items()
 
     def on_mount(self):
         """Called when widget is mounted."""
@@ -44,6 +37,7 @@ class ListPanel(ListView):
 
         service = self.app.service
         lists = service.get_task_lists()
+        active_list_id = self.app.active_list_id
 
         for lst in lists:
             list_id = lst.get("id", "")
@@ -54,11 +48,11 @@ class ListPanel(ListView):
             display_title = f"{title} ({task_count})"
 
             item = ListItem(
-                Text(display_title, markup=False),
+                Static(display_title, markup=False),
                 id=list_id,
             )
 
-            if list_id == self.active_list_id:
+            if list_id == active_list_id:
                 item.add_class("active-list")
 
             self.append(item)
@@ -68,12 +62,3 @@ class ListPanel(ListView):
         list_id = event.item.id
         if list_id:
             self.post_message(ListSelected(list_id))
-
-
-from textual.widgets import Static
-
-
-class Text(Static):
-    """Simple text widget for list items."""
-
-    pass
