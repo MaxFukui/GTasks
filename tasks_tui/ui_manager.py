@@ -41,7 +41,19 @@ class UIManager:
 
     def _draw_border(self, win, title, color_pair_idx=3):
         """Draws a box border and title with optional color."""
-        box(win, 0, 0)
+        # Draw border with color
+        color_attr = color_pair(color_pair_idx)
+        wborder(
+            win,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+        )
         title_str = f" {title} "
         mvwaddstr(win, 0, 2, title_str, color_pair(color_pair_idx) | A_BOLD)
 
@@ -260,8 +272,19 @@ class UIManager:
         """Draws the subtasks panel at the bottom."""
         werase(win)
 
-        # Draw box border
-        box(win, 0, 0)
+        # Draw colored border (magenta)
+        color_attr = color_pair(6)
+        wborder(
+            win,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+            color_attr,
+        )
 
         title = (
             f" Subtasks: {selected_task.get('title', 'Unknown')} "
