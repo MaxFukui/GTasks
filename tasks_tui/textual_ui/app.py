@@ -99,7 +99,27 @@ class GTasksApp(App):
 
     def action_toggle_help(self):
         """Toggle help overlay."""
-        pass  # TODO: Implement help screen
+        help_text = """
+GTasks Help:
+
+Navigation:
+  h/l - Switch panels
+  j/k - Scroll
+
+Actions:
+  o - New task/list
+  r - Rename
+  d - Delete
+  c - Toggle complete
+  a - Set due date
+  p - Paste
+  f - Hide completed
+  m - Move task
+  w - Sync
+  q - Quit
+  ? - This help
+"""
+        self.notify(help_text.strip(), timeout=5)
 
     def action_focus_next(self):
         """Move focus to next panel."""
