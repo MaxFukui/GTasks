@@ -155,8 +155,8 @@ class UIManager:
     def _draw_list_panel(self, win, lists, active_list_id, task_counts):
         """Draws the Task List titles."""
         werase(win)
-        # Use color 4 (yellow) if lists panel is active, else color 3 (cyan)
-        border_color = 4 if self.active_panel == "lists" else 3
+        # Use color 3 (cyan) if lists panel is active, else color 4 (yellow)
+        border_color = 3 if self.active_panel == "lists" else 4
         self._draw_border(win, "Lists", border_color)
         max_y, max_x = getmaxyx(win)
 
@@ -194,8 +194,8 @@ class UIManager:
         """Draws the individual Tasks."""
         werase(win)
         title = f"Tasks in {parent_task['title']}" if parent_task else "Tasks"
-        # Use color 4 (yellow) if tasks panel is active, else color 3 (cyan)
-        border_color = 4 if self.active_panel == "tasks" else 3
+        # Use color 3 (cyan) if tasks panel is active, else color 4 (yellow)
+        border_color = 3 if self.active_panel == "tasks" else 4
         self._draw_border(win, title, border_color)
         max_y, max_x = getmaxyx(win)
 
