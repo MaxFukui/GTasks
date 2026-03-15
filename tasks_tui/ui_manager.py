@@ -35,6 +35,9 @@ class UIManager:
         init_pair(3, COLOR_CYAN, COLOR_BLACK)  # Header
         init_pair(4, COLOR_YELLOW, COLOR_BLACK)  # Active List
         init_pair(5, COLOR_BLUE, COLOR_BLACK)  # Selected
+        init_pair(6, COLOR_MAGENTA, COLOR_BLACK)  # Subtask header
+        init_pair(7, COLOR_CYAN, COLOR_BLACK)  # Subtask text
+        init_pair(8, COLOR_WHITE, COLOR_BLUE)  # Subtask completed
 
     def _draw_border(self, win, title):
         """Draws a simple box border and title."""
@@ -199,43 +202,49 @@ class UIManager:
         if not tasks:
             attr = color_pair(5) if self.active_panel == "tasks" else A_DIM
             mvwaddstr(win, 1, 2, "No tasks in this list.", attr)
+            return
 
         for idx, task in enumerate(tasks):
             task_title = task.get("title", "Untitled Task")
             status = task.get("status", "needsAction")
             is_selected = self.active_panel == "tasks" and idx == self.selected_task_idx
+            has_children = task.get("id") in parent_ids
             y_pos = idx + 1  # Start drawing content on line 1
 
             if y_pos >= max_y - 2:
                 break  # Avoid drawing off the screen
 
-            attr = A_NORMAL
-            symbol = "[ ]"
-
+            # Determine colors and symbols
             if status == "completed":
-                attr = color_pair(2)
-                symbol = "[X]"
+                symbol = "✓"
+                attr = color_pair(2)  # Green
+            else:
+                symbol = "○"
+                attr = A_NORMAL
 
+            # Selected gets blue background
             if is_selected:
                 attr = color_pair(5)
 
-            # Pad the title to ensure highlight fills the line
+            # Build due date string if present
             due_date_str = ""
             if "due" in task:
                 try:
-                    # Google Tasks API returns 'due' in RFC 3339 format
                     due_date = isoparse(task["due"])
-                    due_date_str = f" (Due: {due_date.strftime('%Y-%m-%d')})"
+                    due_date_str = f" {due_date.strftime('%m/%d')}"
                 except ValueError:
-                    due_date_str = " (Invalid Date)"
+                    pass
 
-            note_indicator = "*" if "notes" in task and task["notes"] else " "
+            # Note indicator
+            note_indicator = "📝" if "notes" in task and task["notes"] else ""
+
+            # Children indicator
             children_count = children_counts.get(task["id"], 0)
-            has_children_indicator = (
-                f" ({children_count})" if children_count > 0 else ""
-            )
+            children_indicator = f" ({children_count})" if children_count > 0 else ""
+            if has_children and children_count > 0:
+                children_indicator = f" ⤵{children_count}"
 
-            display_line = f"{symbol} {note_indicator}{task_title}{due_date_str}{has_children_indicator}"
+            display_line = f"{symbol} {note_indicator}{task_title}{due_date_str}{children_indicator}"
             # Truncate if too long, ensuring space for selection highlight
             mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
 
@@ -246,23 +255,56 @@ class UIManager:
     def _draw_subtask_panel(self, win, subtasks, selected_task):
         """Draws the subtasks panel at the bottom."""
         werase(win)
+
+        # Draw box border
+        box(win, 0, 0)
+
         title = (
-            f"Subtasks: {selected_task.get('title', 'Unknown')}"
+            f" Subtasks: {selected_task.get('title', 'Unknown')} "
             if selected_task
-            else "Subtasks"
+            else " Subtasks "
         )
-        self._draw_border(win, title)
+        mvwaddstr(win, 0, 2, title, color_pair(6) | A_BOLD)
+
         max_y, max_x = getmaxyx(win)
+
+        # Show count in the corner
+        count_str = f"({len(subtasks)})"
+        mvwaddstr(win, 0, max_x - len(count_str) - 2, count_str, color_pair(6) | A_BOLD)
+
+        if not subtasks:
+            mvwaddstr(win, 1, 2, "No subtasks", A_DIM)
+            return
 
         for idx, task in enumerate(subtasks):
             task_title = task.get("title", "Untitled Task")
             status = task.get("status", "needsAction")
+            due = task.get("due", "")
 
-            symbol = "[X]" if status == "completed" else "[ ]"
-            attr = color_pair(2) if status == "completed" else A_NORMAL
+            # Determine symbol and color based on status
+            if status == "completed":
+                symbol = "✓"
+                attr = color_pair(2)  # Green
+            else:
+                symbol = "○"
+                attr = color_pair(7)  # Cyan
 
-            display_line = f"  {symbol} {task_title}"
+            # Build due date string if present
+            due_str = ""
+            if due:
+                try:
+                    due_date = isoparse(due)
+                    due_str = f" {due_date.strftime('%m/%d')}"
+                except ValueError:
+                    pass
+
+            # Build display line with indentation
+            display_line = f"  {symbol} {task_title}{due_str}"
             mvwaddstr(win, idx + 1, 1, display_line[: max_x - 2], attr)
+
+        # Draw help text at bottom of panel
+        help_text = "[Enter] open  [c] toggle  [d] delete"
+        mvwaddstr(win, max_y - 1, 1, help_text, A_DIM)
 
     def update_task_selection(self, tasks, direction):
         """Moves the task selection cursor (up/down)."""
