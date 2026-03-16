@@ -193,27 +193,13 @@ def handle_input(stdscr, app_state, ui_manager):
     if key == KEY_RESIZE:
         return True  # Triggers a redraw
 
-    # Block action keys when help is shown (only allow ?, q, or arrows to close)
-    if ui_manager.show_help:
-        if key == ord("?"):
-            ui_manager.toggle_help()
-        elif key not in [
-            ord("q"),
-            ord("Q"),
-            KEY_UP,
-            KEY_DOWN,
-            KEY_LEFT,
-            KEY_RIGHT,
-            ord("k"),
-            ord("j"),
-            ord("h"),
-            ord("l"),
-        ]:
-            return True
-        # Let other keys pass through for navigation
+    # Handle help toggle - process the key normally after toggling help
+    if ui_manager.show_help and key == ord("?"):
+        ui_manager.toggle_help()
+        return True
 
     # Movement
-    elif key == KEY_UP or key == ord("k"):
+    if key == KEY_UP or key == ord("k"):
         if ui_manager.active_panel == "tasks":
             ui_manager.update_task_selection(app_state.tasks, -1)
         elif ui_manager.active_panel == "lists":
@@ -247,18 +233,21 @@ def handle_input(stdscr, app_state, ui_manager):
             ui_manager.selected_task_idx = 0
 
     # List reordering (only in lists panel)
-    elif ui_manager.active_panel == "lists" and app_state.task_lists:
+    if ui_manager.active_panel == "lists" and app_state.task_lists:
         if key == ord(","):
             app_state.move_list_down(ui_manager.selected_list_idx, ui_manager)
+            return True
         elif key == ord("."):
             app_state.move_list_up(ui_manager.selected_list_idx, ui_manager)
+            return True
         elif key == ord("s"):
             app_state.reset_list_order()
             ui_manager.show_temporary_message("List order reset to original")
+            return True
 
     # Action Keys
 
-    elif key == ord("c"):
+    if key == ord("c"):
         # Toggle task status
         selected_task = app_state.tasks[ui_manager.selected_task_idx]
         app_state.service.toggle_task_status(

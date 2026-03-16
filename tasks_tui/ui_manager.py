@@ -137,7 +137,7 @@ class UIManager:
                 ("?", "Close Help"),
             ]
 
-        help_h = len(controls) + 4
+        help_h = len(controls) + 6
         help_w = 60
         help_y = (h - help_h) // 2
         help_x = (w - help_w) // 2
@@ -149,6 +149,11 @@ class UIManager:
 
         for i, (key, desc) in enumerate(controls):
             mvwaddstr(help_win, i + 1, 2, f"{key:<20} {desc}")
+
+        # Add version and commit info at the bottom
+        version_line = len(controls) + 2
+        mvwaddstr(help_win, version_line, 2, "-" * 56)
+        mvwaddstr(help_win, version_line + 1, 2, f"Version: 0.1.7 (23606fe)", A_DIM)
 
         wrefresh(help_win)
 
