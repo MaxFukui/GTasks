@@ -99,10 +99,13 @@ class AppState:
         local_storage.save_config(config)
 
     def calculate_task_counts(self):
-        """Calculates the number of tasks in each list."""
+        """Calculates the number of tasks (undone/total) in each list."""
         for task_list in self.task_lists:
             list_id = task_list["id"]
-            self.task_counts[list_id] = len(self.service.get_tasks_for_list(list_id))
+            tasks = self.service.get_tasks_for_list(list_id)
+            total = len(tasks)
+            undone = len([t for t in tasks if t.get("status") != "completed"])
+            self.task_counts[list_id] = (undone, total)
 
     def get_tasks_for_active_list(self):
         """Retrieves tasks for the active list, using cache if possible."""

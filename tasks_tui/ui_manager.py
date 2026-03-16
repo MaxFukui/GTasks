@@ -168,8 +168,8 @@ class UIManager:
         for idx, list_item in enumerate(lists):
             list_title = list_item.get("title", "Untitled List")
             list_id = list_item.get("id")
-            task_count = task_counts.get(list_id, 0)
-            display_title = f"{list_title} ({task_count})"
+            undone, total = task_counts.get(list_id, (0, 0))
+            display_title = f"{list_title} ({undone}/{total})"
 
             is_active = list_item["id"] == active_list_id
             is_selected = self.active_panel == "lists" and idx == self.selected_list_idx
