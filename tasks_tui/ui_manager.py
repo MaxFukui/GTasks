@@ -59,6 +59,7 @@ class UIManager:
         hide_completed=False,
         selected_task=None,
         subtasks=None,
+        preview_list_id=None,
     ):
         h, w = getmaxyx(self.stdscr)
 
@@ -86,7 +87,13 @@ class UIManager:
         # 3. Draw content inside the windows
         self._draw_list_panel(list_win, lists, active_list_id, task_counts)
         self._draw_task_panel(
-            task_win, tasks, parent_task, parent_ids, children_counts, hide_completed
+            task_win,
+            tasks,
+            parent_task,
+            parent_ids,
+            children_counts,
+            hide_completed,
+            preview_list_id=preview_list_id,
         )
 
         # Draw subtask panel if available
@@ -195,10 +202,16 @@ class UIManager:
         parent_ids=None,
         children_counts=None,
         hide_completed=False,
+        preview_list_id=None,
     ):
         """Draws the individual Tasks."""
         werase(win)
-        title = f"Tasks in {parent_task['title']}" if parent_task else "Tasks"
+        if parent_task:
+            title = f"Tasks in {parent_task['title']}"
+        elif preview_list_id:
+            title = "Tasks (Preview)"
+        else:
+            title = "Tasks"
         # Use color 3 (cyan) if tasks panel is active, else color 4 (yellow)
         border_color = 3 if self.active_panel == "tasks" else 4
         self._draw_border(win, title, border_color)

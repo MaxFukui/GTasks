@@ -81,6 +81,7 @@ class AppState:
         self.filtered_tasks_cache = {}  # Cache for filtered tasks
         self.task_counts = {}
         self.hide_completed = config.get("hide_completed", False)
+        self.preview_list_id = self.active_list_id  # Start with active list as preview
         self.tasks = self.get_tasks_for_active_list()
         self.list_buffer = ""
         self.task_buffer = ""
@@ -122,6 +123,18 @@ class AppState:
                 self.filtered_tasks_cache[self.active_list_id] = tasks
             else:
                 tasks = self.filtered_tasks_cache[self.active_list_id]
+
+        if self.hide_completed:
+            tasks = [t for t in tasks if t.get("status") != "completed"]
+        return tasks
+
+    def get_preview_tasks(self, list_id):
+        """Retrieves tasks for previewing a list without making it active."""
+        if list_id not in self.filtered_tasks_cache or self.service.dirty:
+            tasks = self.service.get_tasks_for_list(list_id)
+            self.filtered_tasks_cache[list_id] = tasks
+        else:
+            tasks = self.filtered_tasks_cache[list_id]
 
         if self.hide_completed:
             tasks = [t for t in tasks if t.get("status") != "completed"]
@@ -207,11 +220,19 @@ def handle_input(stdscr, app_state, ui_manager):
             ui_manager.update_task_selection(app_state.tasks, -1)
         elif ui_manager.active_panel == "lists":
             ui_manager.update_list_selection(app_state.task_lists, -1)
+            # Update preview to show tasks from selected list
+            if app_state.task_lists:
+                selected_list = app_state.task_lists[ui_manager.selected_list_idx]
+                app_state.preview_list_id = selected_list["id"]
     elif key == KEY_DOWN or key == ord("j"):
         if ui_manager.active_panel == "tasks":
             ui_manager.update_task_selection(app_state.tasks, 1)
         elif ui_manager.active_panel == "lists":
             ui_manager.update_list_selection(app_state.task_lists, 1)
+            # Update preview to show tasks from selected list
+            if app_state.task_lists:
+                selected_list = app_state.task_lists[ui_manager.selected_list_idx]
+                app_state.preview_list_id = selected_list["id"]
     elif key == KEY_LEFT or key == ord("h"):
         if app_state.current_parent_task_id:
             app_state.current_parent_task_id = app_state.parent_task_id_stack.pop()
@@ -220,12 +241,16 @@ def handle_input(stdscr, app_state, ui_manager):
                 ui_manager.selected_task_idx = app_state.parent_task_idx_stack.pop()
         elif ui_manager.active_panel == "tasks":
             ui_manager.toggle_panel()
+            # When going back to lists panel, set preview to active list
+            app_state.preview_list_id = app_state.active_list_id
     elif key == KEY_RIGHT or key == ord("l"):
         if ui_manager.active_panel == "lists":
             selected_list = app_state.task_lists[ui_manager.selected_list_idx]
             if app_state.active_list_id != selected_list["id"]:
                 app_state.change_active_list(selected_list["id"])
                 ui_manager.selected_task_idx = 0  # Reset task selection
+            # Clear preview when entering a list
+            app_state.preview_list_id = None
             ui_manager.toggle_panel()
         elif ui_manager.active_panel == "tasks" and app_state.tasks:
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
@@ -443,38 +468,43 @@ def main_loop(stdscr):
     while running:
         # 2. Draw the UI based on current state
         try:
+            # Determine which list to show: preview (when in lists panel) or active
+            display_list_id = app_state.active_list_id
+            display_tasks = app_state.tasks
+            is_preview = False
+
+            if ui_manager.active_panel == "lists" and app_state.preview_list_id:
+                display_list_id = app_state.preview_list_id
+                display_tasks = app_state.get_preview_tasks(display_list_id)
+                is_preview = True
+
             parent_task = None
             if app_state.current_parent_task_id:
                 parent_task = app_state.service.get_task(
                     app_state.active_list_id, app_state.current_parent_task_id
                 )
 
-            parent_ids = app_state.service.get_parent_task_ids(app_state.active_list_id)
-            children_counts = app_state.service.get_children_counts(
-                app_state.active_list_id
-            )
+            parent_ids = app_state.service.get_parent_task_ids(display_list_id)
+            children_counts = app_state.service.get_children_counts(display_list_id)
 
             # Get subtasks for selected task (for bottom panel)
             selected_task = None
             subtasks = []
             if (
                 ui_manager.active_panel == "tasks"
-                and app_state.tasks
-                and ui_manager.selected_task_idx < len(app_state.tasks)
+                and display_tasks
+                and ui_manager.selected_task_idx < len(display_tasks)
             ):
-                selected_task = app_state.tasks[ui_manager.selected_task_idx]
+                selected_task = display_tasks[ui_manager.selected_task_idx]
                 if selected_task:
-                    subtask_ids = app_state.service.get_children_counts(
-                        app_state.active_list_id
-                    )
                     if selected_task.get("id") in parent_ids:
                         subtasks = app_state.service.get_subtasks(
-                            app_state.active_list_id, selected_task["id"]
+                            display_list_id, selected_task["id"]
                         )
 
             ui_manager.draw_layout(
                 app_state.task_lists,
-                app_state.tasks,
+                display_tasks,
                 app_state.active_list_id,
                 app_state.task_counts,
                 parent_task=parent_task,
@@ -483,6 +513,7 @@ def main_loop(stdscr):
                 hide_completed=app_state.hide_completed,
                 selected_task=selected_task,
                 subtasks=subtasks,
+                preview_list_id=display_list_id if is_preview else None,
             )
         except Exception as e:
             # Handles window resize errors gracefully
