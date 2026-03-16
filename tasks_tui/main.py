@@ -249,11 +249,12 @@ def handle_input(stdscr, app_state, ui_manager):
 
     if key == ord("c"):
         # Toggle task status
-        selected_task = app_state.tasks[ui_manager.selected_task_idx]
-        app_state.service.toggle_task_status(
-            app_state.active_list_id, selected_task["id"]
-        )
-        app_state.refresh_data()  # Refresh display after change
+        if ui_manager.active_panel == "tasks" and app_state.tasks:
+            selected_task = app_state.tasks[ui_manager.selected_task_idx]
+            app_state.service.toggle_task_status(
+                app_state.active_list_id, selected_task["id"]
+            )
+            app_state.refresh_data()  # Refresh display after change
 
     elif key == ord("w"):
         ui_manager.start_sync_animation()
