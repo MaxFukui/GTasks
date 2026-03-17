@@ -154,6 +154,11 @@ class AppState:
             # Get the actual list IDs from task_lists (not list_order which may have deleted lists)
             list_id_to_move = self.task_lists[list_idx]["id"]
             list_id_above = self.task_lists[list_idx - 1]["id"]
+            # Ensure both IDs are in list_order (new lists might not be)
+            if list_id_to_move not in self.list_order:
+                self.list_order.append(list_id_to_move)
+            if list_id_above not in self.list_order:
+                self.list_order.append(list_id_above)
             # Find and swap these IDs in list_order
             idx_to_move = self.list_order.index(list_id_to_move)
             idx_above = self.list_order.index(list_id_above)
@@ -178,6 +183,11 @@ class AppState:
             # Get the actual list IDs from task_lists (not list_order which may have deleted lists)
             list_id_to_move = self.task_lists[list_idx]["id"]
             list_id_below = self.task_lists[list_idx + 1]["id"]
+            # Ensure both IDs are in list_order (new lists might not be)
+            if list_id_to_move not in self.list_order:
+                self.list_order.append(list_id_to_move)
+            if list_id_below not in self.list_order:
+                self.list_order.append(list_id_below)
             # Find and swap these IDs in list_order
             idx_to_move = self.list_order.index(list_id_to_move)
             idx_below = self.list_order.index(list_id_below)
