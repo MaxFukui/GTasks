@@ -149,11 +149,17 @@ class AppState:
 
     def move_list_up(self, list_idx, ui_manager):
         """Moves a list up in the order."""
-        if list_idx > 0 and list_idx < len(self.list_order):
-            # Swap in list_order
-            self.list_order[list_idx], self.list_order[list_idx - 1] = (
-                self.list_order[list_idx - 1],
-                self.list_order[list_idx],
+        # Use task_lists length for bounds checking (excludes deleted lists)
+        if list_idx > 0 and list_idx < len(self.task_lists):
+            # Get the actual list IDs from task_lists (not list_order which may have deleted lists)
+            list_id_to_move = self.task_lists[list_idx]["id"]
+            list_id_above = self.task_lists[list_idx - 1]["id"]
+            # Find and swap these IDs in list_order
+            idx_to_move = self.list_order.index(list_id_to_move)
+            idx_above = self.list_order.index(list_id_above)
+            self.list_order[idx_to_move], self.list_order[idx_above] = (
+                self.list_order[idx_above],
+                self.list_order[idx_to_move],
             )
             self.service.set_list_order(self.list_order)
             # Refresh task_lists to match new order
@@ -167,11 +173,17 @@ class AppState:
 
     def move_list_down(self, list_idx, ui_manager):
         """Moves a list down in the order."""
-        if list_idx < len(self.list_order) - 1 and list_idx >= 0:
-            # Swap in list_order
-            self.list_order[list_idx], self.list_order[list_idx + 1] = (
-                self.list_order[list_idx + 1],
-                self.list_order[list_idx],
+        # Use task_lists length for bounds checking (excludes deleted lists)
+        if list_idx < len(self.task_lists) - 1 and list_idx >= 0:
+            # Get the actual list IDs from task_lists (not list_order which may have deleted lists)
+            list_id_to_move = self.task_lists[list_idx]["id"]
+            list_id_below = self.task_lists[list_idx + 1]["id"]
+            # Find and swap these IDs in list_order
+            idx_to_move = self.list_order.index(list_id_to_move)
+            idx_below = self.list_order.index(list_id_below)
+            self.list_order[idx_to_move], self.list_order[idx_below] = (
+                self.list_order[idx_below],
+                self.list_order[idx_to_move],
             )
             self.service.set_list_order(self.list_order)
             # Refresh task_lists to match new order
