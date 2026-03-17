@@ -385,7 +385,12 @@ def handle_input(stdscr, app_state, ui_manager):
             )
             if confirm.lower() == "y":
                 app_state.list_buffer = selected_list["title"]
-                app_state.service.delete_list(selected_list["id"])
+                list_id_to_delete = selected_list["id"]
+                app_state.service.delete_list(list_id_to_delete)
+                # Remove from list_order to keep it clean
+                if list_id_to_delete in app_state.list_order:
+                    app_state.list_order.remove(list_id_to_delete)
+                    app_state.service.set_list_order(app_state.list_order)
                 app_state.task_lists = app_state.service.get_task_lists(
                     app_state.list_order
                 )
@@ -426,8 +431,18 @@ def handle_input(stdscr, app_state, ui_manager):
                 )
             app_state.refresh_data()
         else:
-            app_state.service.add_list(app_state.list_buffer)
+            # Paste list - create from buffer and select it
+            new_list = app_state.service.add_list(app_state.list_buffer)
+            # Add to list_order for proper ordering
+            app_state.list_order.append(new_list["id"])
+            app_state.service.set_list_order(app_state.list_order)
             app_state.refresh_data()
+            # Select the newly created list
+            for i, lst in enumerate(app_state.task_lists):
+                if lst["id"] == new_list["id"]:
+                    ui_manager.selected_list_idx = i
+                    app_state.preview_list_id = new_list["id"]
+                    break
 
     # Add New Task
     elif key == ord("o"):
@@ -446,8 +461,17 @@ def handle_input(stdscr, app_state, ui_manager):
         else:
             new_title = ui_manager.get_user_input("New List Title: ")
             if new_title:
-                app_state.service.add_list(new_title)
+                new_list = app_state.service.add_list(new_title)
+                # Add to list_order for proper ordering
+                app_state.list_order.append(new_list["id"])
+                app_state.service.set_list_order(app_state.list_order)
                 app_state.refresh_data()
+                # Select the newly created list
+                for i, lst in enumerate(app_state.task_lists):
+                    if lst["id"] == new_list["id"]:
+                        ui_manager.selected_list_idx = i
+                        app_state.preview_list_id = new_list["id"]
+                        break
 
     elif key == ord("?"):
         ui_manager.toggle_help()
