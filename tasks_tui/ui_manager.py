@@ -7,6 +7,41 @@ from unicurses import *
 from dateutil.parser import isoparse
 import time
 import threading
+import subprocess
+import os
+
+
+def get_version_info():
+    """Get version from pyproject.toml and git commit hash."""
+    version = "unknown"
+    commit_hash = "unknown"
+
+    # Try to read version from pyproject.toml
+    try:
+        pyproject_path = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
+        if os.path.exists(pyproject_path):
+            with open(pyproject_path, "r") as f:
+                for line in f:
+                    if line.startswith("version"):
+                        version = line.split("=")[1].strip().strip('"')
+                        break
+    except Exception:
+        pass
+
+    # Try to get git commit hash
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.dirname(__file__)),
+        )
+        if result.returncode == 0:
+            commit_hash = result.stdout.strip()
+    except Exception:
+        pass
+
+    return version, commit_hash
 
 
 class UIManager:
@@ -159,8 +194,11 @@ class UIManager:
 
         # Add version and commit info at the bottom
         version_line = len(controls) + 2
+        version, commit_hash = get_version_info()
         mvwaddstr(help_win, version_line, 2, "-" * 56)
-        mvwaddstr(help_win, version_line + 1, 2, f"Version: 0.1.7 (23606fe)", A_DIM)
+        mvwaddstr(
+            help_win, version_line + 1, 2, f"Version: {version} ({commit_hash})", A_DIM
+        )
 
         wrefresh(help_win)
 
