@@ -149,7 +149,7 @@ class AppState:
 
     def move_list_up(self, list_idx, ui_manager):
         """Moves a list up in the order."""
-        if list_idx > 0:
+        if list_idx > 0 and list_idx < len(self.list_order):
             self.list_order[list_idx], self.list_order[list_idx - 1] = (
                 self.list_order[list_idx - 1],
                 self.list_order[list_idx],
@@ -158,12 +158,13 @@ class AppState:
             self.task_lists = self.service.get_task_lists(self.list_order)
             ui_manager.selected_list_idx = list_idx - 1
             # Update preview to show the list that was moved
-            self.preview_list_id = self.list_order[list_idx - 1]
+            if list_idx - 1 < len(self.list_order):
+                self.preview_list_id = self.list_order[list_idx - 1]
             self.save_config()
 
     def move_list_down(self, list_idx, ui_manager):
         """Moves a list down in the order."""
-        if list_idx < len(self.list_order) - 1:
+        if list_idx < len(self.list_order) - 1 and list_idx >= 0:
             self.list_order[list_idx], self.list_order[list_idx + 1] = (
                 self.list_order[list_idx + 1],
                 self.list_order[list_idx],
@@ -172,7 +173,8 @@ class AppState:
             self.task_lists = self.service.get_task_lists(self.list_order)
             ui_manager.selected_list_idx = list_idx + 1
             # Update preview to show the list that was moved
-            self.preview_list_id = self.list_order[list_idx + 1]
+            if list_idx + 1 < len(self.list_order):
+                self.preview_list_id = self.list_order[list_idx + 1]
             self.save_config()
 
     def reset_list_order(self):
@@ -225,18 +227,24 @@ def handle_input(stdscr, app_state, ui_manager):
         elif ui_manager.active_panel == "lists":
             ui_manager.update_list_selection(app_state.task_lists, -1)
             # Update preview to show tasks from selected list
-            if app_state.task_lists:
+            if app_state.task_lists and 0 <= ui_manager.selected_list_idx < len(
+                app_state.task_lists
+            ):
                 selected_list = app_state.task_lists[ui_manager.selected_list_idx]
                 app_state.preview_list_id = selected_list["id"]
+                ui_manager.selected_task_idx = 0  # Reset task selection for preview
     elif key == KEY_DOWN or key == ord("j"):
         if ui_manager.active_panel == "tasks":
             ui_manager.update_task_selection(app_state.tasks, 1)
         elif ui_manager.active_panel == "lists":
             ui_manager.update_list_selection(app_state.task_lists, 1)
             # Update preview to show tasks from selected list
-            if app_state.task_lists:
+            if app_state.task_lists and 0 <= ui_manager.selected_list_idx < len(
+                app_state.task_lists
+            ):
                 selected_list = app_state.task_lists[ui_manager.selected_list_idx]
                 app_state.preview_list_id = selected_list["id"]
+                ui_manager.selected_task_idx = 0  # Reset task selection for preview
     elif key == KEY_LEFT or key == ord("h"):
         if app_state.current_parent_task_id:
             app_state.current_parent_task_id = app_state.parent_task_id_stack.pop()
@@ -249,13 +257,16 @@ def handle_input(stdscr, app_state, ui_manager):
             app_state.preview_list_id = app_state.active_list_id
     elif key == KEY_RIGHT or key == ord("l"):
         if ui_manager.active_panel == "lists":
-            selected_list = app_state.task_lists[ui_manager.selected_list_idx]
-            if app_state.active_list_id != selected_list["id"]:
-                app_state.change_active_list(selected_list["id"])
-                ui_manager.selected_task_idx = 0  # Reset task selection
-            # Clear preview when entering a list
-            app_state.preview_list_id = None
-            ui_manager.toggle_panel()
+            if app_state.task_lists and 0 <= ui_manager.selected_list_idx < len(
+                app_state.task_lists
+            ):
+                selected_list = app_state.task_lists[ui_manager.selected_list_idx]
+                if app_state.active_list_id != selected_list["id"]:
+                    app_state.change_active_list(selected_list["id"])
+                    ui_manager.selected_task_idx = 0  # Reset task selection
+                # Clear preview when entering a list
+                app_state.preview_list_id = None
+                ui_manager.toggle_panel()
         elif ui_manager.active_panel == "tasks" and app_state.tasks:
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
             app_state.parent_task_id_stack.append(app_state.current_parent_task_id)
