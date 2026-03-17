@@ -157,6 +157,8 @@ class AppState:
             self.service.set_list_order(self.list_order)
             self.task_lists = self.service.get_task_lists(self.list_order)
             ui_manager.selected_list_idx = list_idx - 1
+            # Update preview to show the list that was moved
+            self.preview_list_id = self.list_order[list_idx - 1]
             self.save_config()
 
     def move_list_down(self, list_idx, ui_manager):
@@ -169,6 +171,8 @@ class AppState:
             self.service.set_list_order(self.list_order)
             self.task_lists = self.service.get_task_lists(self.list_order)
             ui_manager.selected_list_idx = list_idx + 1
+            # Update preview to show the list that was moved
+            self.preview_list_id = self.list_order[list_idx + 1]
             self.save_config()
 
     def reset_list_order(self):
