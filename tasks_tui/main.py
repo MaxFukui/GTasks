@@ -150,31 +150,37 @@ class AppState:
     def move_list_up(self, list_idx, ui_manager):
         """Moves a list up in the order."""
         if list_idx > 0 and list_idx < len(self.list_order):
+            # Swap in list_order
             self.list_order[list_idx], self.list_order[list_idx - 1] = (
                 self.list_order[list_idx - 1],
                 self.list_order[list_idx],
             )
             self.service.set_list_order(self.list_order)
+            # Refresh task_lists to match new order
             self.task_lists = self.service.get_task_lists(self.list_order)
+            # Update selection
             ui_manager.selected_list_idx = list_idx - 1
-            # Update preview to show the list that was moved
-            if list_idx - 1 < len(self.list_order):
-                self.preview_list_id = self.list_order[list_idx - 1]
+            # Update preview to show the list at the new position
+            if self.task_lists and 0 <= list_idx - 1 < len(self.task_lists):
+                self.preview_list_id = self.task_lists[list_idx - 1]["id"]
             self.save_config()
 
     def move_list_down(self, list_idx, ui_manager):
         """Moves a list down in the order."""
         if list_idx < len(self.list_order) - 1 and list_idx >= 0:
+            # Swap in list_order
             self.list_order[list_idx], self.list_order[list_idx + 1] = (
                 self.list_order[list_idx + 1],
                 self.list_order[list_idx],
             )
             self.service.set_list_order(self.list_order)
+            # Refresh task_lists to match new order
             self.task_lists = self.service.get_task_lists(self.list_order)
+            # Update selection
             ui_manager.selected_list_idx = list_idx + 1
-            # Update preview to show the list that was moved
-            if list_idx + 1 < len(self.list_order):
-                self.preview_list_id = self.list_order[list_idx + 1]
+            # Update preview to show the list at the new position
+            if self.task_lists and 0 <= list_idx + 1 < len(self.task_lists):
+                self.preview_list_id = self.task_lists[list_idx + 1]["id"]
             self.save_config()
 
     def reset_list_order(self):
