@@ -9,6 +9,52 @@ import time
 import threading
 import subprocess
 import os
+import re
+
+
+def fuzzy_match(pattern, text):
+    """
+    Fuzzy match pattern against text.
+    Returns (score, matched) tuple. Higher score = better match.
+    Score is 0 if no match.
+    """
+    if not pattern:
+        return (1, True)
+
+    pattern = pattern.lower()
+    text = text.lower()
+
+    # Check if all characters in pattern appear in text in order
+    pattern_idx = 0
+    text_idx = 0
+    score = 0
+    consecutive_bonus = 0
+
+    while pattern_idx < len(pattern) and text_idx < len(text):
+        if pattern[pattern_idx] == text[text_idx]:
+            # Character match
+            score += 1
+            # Bonus for consecutive matches
+            if text_idx > 0 and pattern_idx > 0:
+                score += consecutive_bonus
+                consecutive_bonus = min(consecutive_bonus + 1, 3)
+            else:
+                consecutive_bonus = 1
+            # Bonus for matching at word boundaries
+            if text_idx == 0 or text[text_idx - 1] in " _-":
+                score += 2
+            pattern_idx += 1
+        else:
+            consecutive_bonus = 0
+        text_idx += 1
+
+    if pattern_idx == len(pattern):
+        # All pattern characters found in order
+        # Bonus for shorter text (more precise match)
+        score += max(0, 20 - len(text))
+        return (score, True)
+
+    return (0, False)
 
 
 def get_version_info():
@@ -153,6 +199,7 @@ class UIManager:
                 ("q", "Quit and Sync"),
                 ("w", "Write and Sync"),
                 ("h/j/k/l", "Select List"),
+                ("/", "Search Lists"),
                 (",", "Move Down"),
                 (".", "Move Up"),
                 ("s", "Reset Order"),
@@ -492,6 +539,95 @@ class UIManager:
             elif key in [27, ord("q"), ord("c")]:  # Escape
                 delwin(modal_win)
                 return None
+
+            delwin(modal_win)
+
+    def show_fuzzy_search(self, items, title="Search"):
+        """Shows a fuzzy search interface for finding items."""
+        search_query = ""
+        selected_idx = 0
+
+        while True:
+            h, w = getmaxyx(self.stdscr)
+            modal_h = min(20, h - 4)
+            modal_w = min(60, w - 4)
+            modal_y = (h - modal_h) // 2
+            modal_x = (w - modal_w) // 2
+
+            modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
+            werase(modal_win)
+            wborder(modal_win)
+            mvwaddstr(modal_win, 0, 2, f" {title} ", color_pair(3) | A_BOLD)
+
+            # Filter items based on search query
+            if search_query:
+                scored_items = []
+                for idx, item in enumerate(items):
+                    title_text = item.get("title", "Untitled")
+                    score, matched = fuzzy_match(search_query, title_text)
+                    if matched:
+                        scored_items.append((score, idx, item))
+                # Sort by score (highest first)
+                scored_items.sort(key=lambda x: x[0], reverse=True)
+                filtered_items = [(idx, item) for _, idx, item in scored_items]
+            else:
+                filtered_items = [(i, item) for i, item in enumerate(items)]
+
+            # Display search query
+            mvwaddstr(modal_win, 1, 1, f"> {search_query}", color_pair(5))
+            mvwaddstr(modal_win, 2, 1, "-" * (modal_w - 2))
+
+            # Display results
+            max_display = modal_h - 5
+            start_idx = max(0, selected_idx - max_display // 2)
+            end_idx = min(len(filtered_items), start_idx + max_display)
+
+            for display_idx, (original_idx, item) in enumerate(
+                filtered_items[start_idx:end_idx]
+            ):
+                y_pos = display_idx + 3
+                title_text = item.get("title", "Untitled")
+
+                if start_idx + display_idx == selected_idx:
+                    mvwaddstr(
+                        modal_win,
+                        y_pos,
+                        1,
+                        f"> {title_text[: modal_w - 4]}",
+                        color_pair(5),
+                    )
+                else:
+                    mvwaddstr(modal_win, y_pos, 1, f"  {title_text[: modal_w - 4]}")
+
+            # Show count
+            count_str = f"({selected_idx + 1}/{len(filtered_items)})"
+            mvwaddstr(
+                modal_win, modal_h - 2, modal_w - len(count_str) - 2, count_str, A_DIM
+            )
+            mvwaddstr(modal_win, modal_h - 2, 1, "[Enter] select  [Esc] cancel", A_DIM)
+
+            wrefresh(modal_win)
+
+            key = wgetch(modal_win)
+
+            if key == KEY_UP or key == ord("k"):
+                selected_idx = max(0, selected_idx - 1)
+            elif key == KEY_DOWN or key == ord("j"):
+                selected_idx = min(len(filtered_items) - 1, selected_idx + 1)
+            elif key in [ord("\n"), ord("\r"), KEY_ENTER]:
+                delwin(modal_win)
+                if filtered_items:
+                    return filtered_items[selected_idx][0]  # Return original index
+                return None
+            elif key in [27, ord("q")]:  # Escape
+                delwin(modal_win)
+                return None
+            elif key == KEY_BACKSPACE or key == 127:  # Backspace
+                search_query = search_query[:-1]
+                selected_idx = 0
+            elif 32 <= key <= 126:  # Printable characters
+                search_query += chr(key)
+                selected_idx = 0
 
             delwin(modal_win)
 
