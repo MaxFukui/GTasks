@@ -214,6 +214,7 @@ class UIManager:
                 ("q", "Quit and Sync"),
                 ("w", "Write and Sync"),
                 ("h/j/k/l", "Select Task"),
+                ("/", "Search Tasks"),
                 ("c", "Toggle Complete"),
                 ("r", "Rename Task"),
                 ("a", "Add Due Date"),

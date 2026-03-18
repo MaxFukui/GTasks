@@ -315,6 +315,16 @@ def handle_input(stdscr, app_state, ui_manager):
                 ui_manager.selected_task_idx = 0
             return True
 
+    # Fuzzy search for tasks (only in tasks panel)
+    if ui_manager.active_panel == "tasks" and app_state.tasks:
+        if key == ord("/"):
+            result_idx = ui_manager.show_fuzzy_search(
+                app_state.tasks, title="Search Tasks"
+            )
+            if result_idx is not None:
+                ui_manager.selected_task_idx = result_idx
+            return True
+
     # List reordering (only in lists panel)
     if ui_manager.active_panel == "lists" and app_state.task_lists:
         if key == ord(","):
