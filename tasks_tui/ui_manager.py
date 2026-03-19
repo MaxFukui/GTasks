@@ -456,7 +456,7 @@ class UIManager:
         """Toggles the help display."""
         self.show_help = not self.show_help
 
-    def get_user_input(self, prompt="Input: "):
+    def get_user_input(self, prompt="Input: ", default=""):
         """
         Gets a text string from the user at the bottom of the screen.
         This is a common helper function needed in curses applications.
@@ -465,21 +465,37 @@ class UIManager:
         input_win = newwin(1, w, h - 1, 0)
         wmove(input_win, 0, 0)
         waddstr(input_win, prompt, color_pair(0))
+
+        # If default value provided, show it
+        if default:
+            waddstr(input_win, default, color_pair(0))
+
         wrefresh(input_win)
 
-        input_string = ""
+        input_string = default
         try:
             keypad(input_win, True)
             echo()
-            input_string = wgetstr(input_win)
+            curs_set(1)  # Show cursor
+
+            # If there's a default, position cursor at end
+            if default:
+                wmove(input_win, 0, len(prompt) + len(default))
+                wrefresh(input_win)
+
+            result = wgetstr(input_win)
+            if result:
+                if isinstance(result, bytes):
+                    input_string = result.decode("utf-8")
+                else:
+                    input_string = result
+            curs_set(0)  # Hide cursor
             noecho()
         finally:
             werase(input_win)
             wrefresh(input_win)
             delwin(input_win)
 
-        if isinstance(input_string, bytes):
-            return input_string.decode("utf-8")
         return input_string
 
     def show_temporary_message(self, message):

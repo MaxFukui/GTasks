@@ -357,16 +357,23 @@ def handle_input(stdscr, app_state, ui_manager):
 
     elif key == ord("r"):
         if ui_manager.active_panel == "tasks" and app_state.tasks:
-            new_title = ui_manager.get_user_input("New Task Title: ")
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
-            app_state.service.rename_task(
-                app_state.active_list_id, selected_task["id"], new_title
+            current_title = selected_task.get("title", "")
+            new_title = ui_manager.get_user_input(
+                "Rename Task: ", default=current_title
             )
-            app_state.refresh_data()  # Refresh display after change
+            if new_title and new_title != current_title:
+                app_state.service.rename_task(
+                    app_state.active_list_id, selected_task["id"], new_title
+                )
+                app_state.refresh_data()  # Refresh display after change
         elif ui_manager.active_panel == "lists" and app_state.task_lists:
-            new_title = ui_manager.get_user_input("New List Title: ")
-            if new_title:
-                selected_list = app_state.task_lists[ui_manager.selected_list_idx]
+            selected_list = app_state.task_lists[ui_manager.selected_list_idx]
+            current_title = selected_list.get("title", "")
+            new_title = ui_manager.get_user_input(
+                "Rename List: ", default=current_title
+            )
+            if new_title and new_title != current_title:
                 app_state.service.rename_list(selected_list["id"], new_title)
                 app_state.refresh_data()
 
