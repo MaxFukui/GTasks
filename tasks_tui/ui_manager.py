@@ -459,44 +459,77 @@ class UIManager:
     def get_user_input(self, prompt="Input: ", default=""):
         """
         Gets a text string from the user at the bottom of the screen.
-        This is a common helper function needed in curses applications.
+        Supports editing with backspace and cursor visibility.
         """
         h, w = getmaxyx(self.stdscr)
         input_win = newwin(1, w, h - 1, 0)
-        wmove(input_win, 0, 0)
-        waddstr(input_win, prompt, color_pair(0))
 
-        # If default value provided, show it
-        if default:
-            waddstr(input_win, default, color_pair(0))
+        input_string = list(default)  # Use list for easy character manipulation
+        cursor_pos = len(input_string)
 
-        wrefresh(input_win)
+        def redraw():
+            werase(input_win)
+            wmove(input_win, 0, 0)
+            waddstr(input_win, prompt, color_pair(0))
+            waddstr(input_win, "".join(input_string), color_pair(0))
+            wmove(input_win, 0, len(prompt) + cursor_pos)
+            wrefresh(input_win)
 
-        input_string = default
         try:
             keypad(input_win, True)
-            echo()
-            curs_set(1)  # Show cursor
-
-            # If there's a default, position cursor at end
-            if default:
-                wmove(input_win, 0, len(prompt) + len(default))
-                wrefresh(input_win)
-
-            result = wgetstr(input_win)
-            if result:
-                if isinstance(result, bytes):
-                    input_string = result.decode("utf-8")
-                else:
-                    input_string = result
-            curs_set(0)  # Hide cursor
             noecho()
+            curs_set(1)  # Show cursor
+            redraw()
+
+            while True:
+                key = wgetch(input_win)
+
+                if key in [ord("\n"), ord("\r"), KEY_ENTER]:
+                    # Enter pressed - confirm input
+                    break
+                elif key == 27:  # Escape
+                    # Cancel input, return original default
+                    input_string = list(default)
+                    break
+                elif key in [KEY_BACKSPACE, 127, 8]:  # Backspace
+                    if cursor_pos > 0:
+                        cursor_pos -= 1
+                        input_string.pop(cursor_pos)
+                        redraw()
+                elif key == KEY_LEFT:
+                    if cursor_pos > 0:
+                        cursor_pos -= 1
+                        wmove(input_win, 0, len(prompt) + cursor_pos)
+                        wrefresh(input_win)
+                elif key == KEY_RIGHT:
+                    if cursor_pos < len(input_string):
+                        cursor_pos += 1
+                        wmove(input_win, 0, len(prompt) + cursor_pos)
+                        wrefresh(input_win)
+                elif key == KEY_HOME:
+                    cursor_pos = 0
+                    wmove(input_win, 0, len(prompt) + cursor_pos)
+                    wrefresh(input_win)
+                elif key == KEY_END:
+                    cursor_pos = len(input_string)
+                    wmove(input_win, 0, len(prompt) + cursor_pos)
+                    wrefresh(input_win)
+                elif key == KEY_DC:  # Delete key
+                    if cursor_pos < len(input_string):
+                        input_string.pop(cursor_pos)
+                        redraw()
+                elif 32 <= key <= 126:  # Printable characters
+                    input_string.insert(cursor_pos, chr(key))
+                    cursor_pos += 1
+                    redraw()
+
+            curs_set(0)  # Hide cursor
         finally:
             werase(input_win)
             wrefresh(input_win)
             delwin(input_win)
 
-        return input_string
+        return "".join(input_string)
 
     def show_temporary_message(self, message):
         h, w = getmaxyx(self.stdscr)
