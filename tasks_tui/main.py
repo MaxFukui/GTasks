@@ -81,15 +81,15 @@ class AppState:
         self.task_counts = {}
         self.hide_completed = config.get("hide_completed", False)
         self.preview_list_id = self.active_list_id  # Start with active list as preview
+        self.show_help = False
+        self.show_starred = False
+        self.starred_list_context = {}  # task_id → list_id for starred view
         self.tasks = self.get_tasks_for_active_list()
         self.list_buffer = ""
         self.task_buffer = ""
         self.parent_task_id_stack = []
         self.parent_task_idx_stack = []
         self.calculate_task_counts()
-        self.show_help = False
-        self.show_starred = False
-        self.starred_list_context = {}  # task_id → list_id for starred view
 
     def save_config(self):
         """Saves current configuration to disk."""
@@ -121,7 +121,9 @@ class AppState:
             self.starred_list_context = {}
             starred = self.service.get_starred_tasks()
             if self.hide_completed:
-                starred = [(lid, t) for lid, t in starred if t.get("status") != "completed"]
+                starred = [
+                    (lid, t) for lid, t in starred if t.get("status") != "completed"
+                ]
             for list_id, task in starred:
                 self.starred_list_context[task["id"]] = list_id
             return [task for _, task in starred]
@@ -440,7 +442,9 @@ def handle_input(stdscr, app_state, ui_manager):
         if ui_manager.active_panel == "tasks" and app_state.tasks:
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
             list_id = app_state.get_list_id_for_task(selected_task)
-            app_state.task_buffer = app_state.service.get_task(list_id, selected_task["id"])
+            app_state.task_buffer = app_state.service.get_task(
+                list_id, selected_task["id"]
+            )
             app_state.service.delete_task(list_id, selected_task["id"])
             app_state.refresh_data()  # Refresh display after change
             # Adjust selection after deletion
