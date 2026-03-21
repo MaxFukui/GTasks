@@ -3,6 +3,19 @@ from .auth import get_credentials
 from dateutil.parser import isoparse
 from . import local_storage
 
+STAR_MARKER = "⭐"
+
+
+def is_starred(task: dict) -> bool:
+    """Returns True if the task title starts with the star marker."""
+    return task.get("title", "").startswith(STAR_MARKER)
+
+
+def display_title(task: dict) -> str:
+    """Returns the task title with the star marker stripped."""
+    title = task.get("title", "")
+    return title[len(STAR_MARKER):] if title.startswith(STAR_MARKER) else title
+
 
 class TaskService:
     """
@@ -242,6 +255,30 @@ class TaskService:
         self.delete_task(source_list_id, task_id)
 
         return True
+
+    def toggle_star(self, list_id, task_id):
+        """Toggles the star marker on a task title in the local cache."""
+        if not list_id:
+            return None
+        for task in self.data["tasks"].get(list_id, []):
+            if task["id"] == task_id:
+                title = task.get("title", "")
+                if title.startswith(STAR_MARKER):
+                    task["title"] = title[len(STAR_MARKER):]
+                else:
+                    task["title"] = STAR_MARKER + title
+                self.dirty = True
+                return task
+        return None
+
+    def get_starred_tasks(self):
+        """Returns list of (list_id, task) for all non-deleted, non-child starred tasks."""
+        starred = []
+        for list_id, tasks in self.data["tasks"].items():
+            for task in tasks:
+                if not task.get("deleted") and not task.get("parent") and is_starred(task):
+                    starred.append((list_id, task))
+        return starred
 
     def rename_task(self, list_id, task_id, new_name):
         """Renames a task in the local cache."""

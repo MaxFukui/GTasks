@@ -3,7 +3,7 @@
 # the UIManager (View), and runs the main event loop.
 
 from unicurses import *
-from .task_service import TaskService
+from .task_service import TaskService, is_starred, display_title
 from .ui_manager import UIManager
 from . import local_storage
 import sys
@@ -41,9 +41,8 @@ def open_editor_for_task_notes(stdscr, app_state, ui_manager):
     os.remove(temp_path)
 
     if new_note != initial_content:
-        app_state.service.change_detail_task(
-            app_state.active_list_id, selected_task["id"], new_note
-        )
+        list_id = app_state.get_list_id_for_task(selected_task)
+        app_state.service.change_detail_task(list_id, selected_task["id"], new_note)
         app_state.refresh_data()
 
 
@@ -89,6 +88,8 @@ class AppState:
         self.parent_task_idx_stack = []
         self.calculate_task_counts()
         self.show_help = False
+        self.show_starred = False
+        self.starred_list_context = {}  # task_id → list_id for starred view
 
     def save_config(self):
         """Saves current configuration to disk."""
@@ -108,8 +109,23 @@ class AppState:
             undone = len([t for t in tasks if t.get("status") != "completed"])
             self.task_counts[list_id] = (undone, total)
 
+    def get_list_id_for_task(self, task):
+        """Returns the correct list_id for a task, handling starred view."""
+        if self.show_starred:
+            return self.starred_list_context.get(task.get("id"))
+        return self.active_list_id
+
     def get_tasks_for_active_list(self):
         """Retrieves tasks for the active list, using cache if possible."""
+        if self.show_starred:
+            self.starred_list_context = {}
+            starred = self.service.get_starred_tasks()
+            if self.hide_completed:
+                starred = [(lid, t) for lid, t in starred if t.get("status") != "completed"]
+            for list_id, task in starred:
+                self.starred_list_context[task["id"]] = list_id
+            return [task for _, task in starred]
+
         if self.current_parent_task_id:
             tasks = self.service.get_subtasks(
                 self.active_list_id, self.current_parent_task_id
@@ -127,6 +143,18 @@ class AppState:
         if self.hide_completed:
             tasks = [t for t in tasks if t.get("status") != "completed"]
         return tasks
+
+    def toggle_starred_view(self, ui_manager):
+        """Toggles the starred tasks view."""
+        self.show_starred = not self.show_starred
+        self.current_parent_task_id = None
+        self.parent_task_id_stack.clear()
+        self.parent_task_idx_stack.clear()
+        self.filtered_tasks_cache.clear()
+        self.tasks = self.get_tasks_for_active_list()
+        ui_manager.selected_task_idx = 0
+        if self.show_starred:
+            ui_manager.active_panel = "tasks"
 
     def get_preview_tasks(self, list_id):
         """Retrieves tasks for previewing a list without making it active."""
@@ -340,13 +368,26 @@ def handle_input(stdscr, app_state, ui_manager):
 
     # Action Keys
 
+    if key == ord("*"):
+        app_state.toggle_starred_view(ui_manager)
+        label = "Starred view" if app_state.show_starred else "Normal view"
+        ui_manager.show_temporary_message(label)
+        return True
+
+    if key == ord("s"):
+        if ui_manager.active_panel == "tasks" and app_state.tasks:
+            selected_task = app_state.tasks[ui_manager.selected_task_idx]
+            list_id = app_state.get_list_id_for_task(selected_task)
+            app_state.service.toggle_star(list_id, selected_task["id"])
+            app_state.refresh_data()
+            return True
+
     if key == ord("c"):
         # Toggle task status
         if ui_manager.active_panel == "tasks" and app_state.tasks:
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
-            app_state.service.toggle_task_status(
-                app_state.active_list_id, selected_task["id"]
-            )
+            list_id = app_state.get_list_id_for_task(selected_task)
+            app_state.service.toggle_task_status(list_id, selected_task["id"])
             app_state.refresh_data()  # Refresh display after change
 
     elif key == ord("w"):
@@ -358,14 +399,15 @@ def handle_input(stdscr, app_state, ui_manager):
     elif key == ord("r"):
         if ui_manager.active_panel == "tasks" and app_state.tasks:
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
-            current_title = selected_task.get("title", "")
-            new_title = ui_manager.get_user_input(
-                "Rename Task: ", default=current_title
-            )
-            if new_title and new_title != current_title:
-                app_state.service.rename_task(
-                    app_state.active_list_id, selected_task["id"], new_title
-                )
+            list_id = app_state.get_list_id_for_task(selected_task)
+            # Show the clean title (without star marker) as the default
+            clean_title = display_title(selected_task)
+            new_title = ui_manager.get_user_input("Rename Task: ", default=clean_title)
+            if new_title and new_title != clean_title:
+                # Preserve star marker if task was starred
+                if is_starred(selected_task):
+                    new_title = "⭐" + new_title
+                app_state.service.rename_task(list_id, selected_task["id"], new_title)
                 app_state.refresh_data()  # Refresh display after change
         elif ui_manager.active_panel == "lists" and app_state.task_lists:
             selected_list = app_state.task_lists[ui_manager.selected_list_idx]
@@ -382,8 +424,9 @@ def handle_input(stdscr, app_state, ui_manager):
             new_date = ui_manager.get_user_input("Due Date: ")
             if is_valid_date(new_date):
                 selected_task = app_state.tasks[ui_manager.selected_task_idx]
+                list_id = app_state.get_list_id_for_task(selected_task)
                 app_state.service.change_date_task(
-                    app_state.active_list_id, selected_task["id"], new_date
+                    list_id, selected_task["id"], new_date
                 )
                 app_state.refresh_data()
             else:
@@ -396,10 +439,9 @@ def handle_input(stdscr, app_state, ui_manager):
     elif key == ord("d"):
         if ui_manager.active_panel == "tasks" and app_state.tasks:
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
-            app_state.task_buffer = app_state.service.get_task(
-                app_state.active_list_id, selected_task["id"]
-            )
-            app_state.service.delete_task(app_state.active_list_id, selected_task["id"])
+            list_id = app_state.get_list_id_for_task(selected_task)
+            app_state.task_buffer = app_state.service.get_task(list_id, selected_task["id"])
+            app_state.service.delete_task(list_id, selected_task["id"])
             app_state.refresh_data()  # Refresh display after change
             # Adjust selection after deletion
             if (
@@ -610,6 +652,7 @@ def main_loop(stdscr):
                 selected_task=selected_task,
                 subtasks=subtasks,
                 preview_list_id=display_list_id if is_preview else None,
+                show_starred=app_state.show_starred,
             )
         except Exception as e:
             # Handles window resize errors gracefully

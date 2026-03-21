@@ -10,6 +10,9 @@ import threading
 import subprocess
 import os
 import re
+from tasks_tui.task_service import is_starred, display_title
+
+CP_STARRED = 9  # Yellow — starred task indicator
 
 
 def fuzzy_match(pattern, text):
@@ -119,6 +122,7 @@ class UIManager:
         init_pair(6, COLOR_MAGENTA, COLOR_BLACK)  # Subtask header
         init_pair(7, COLOR_CYAN, COLOR_BLACK)  # Subtask text
         init_pair(8, COLOR_WHITE, COLOR_BLUE)  # Subtask completed
+        init_pair(9, COLOR_YELLOW, COLOR_BLACK)  # Starred task
 
     def _draw_border(self, win, title, color_pair_idx=3):
         """Draws a box border and title with optional color."""
@@ -141,6 +145,7 @@ class UIManager:
         selected_task=None,
         subtasks=None,
         preview_list_id=None,
+        show_starred=False,
     ):
         h, w = getmaxyx(self.stdscr)
 
@@ -175,6 +180,7 @@ class UIManager:
             children_counts,
             hide_completed,
             preview_list_id=preview_list_id,
+            show_starred=show_starred,
         )
 
         # Draw subtask panel if available
@@ -224,6 +230,8 @@ class UIManager:
                 ("o", "New Task"),
                 ("f", "Toggle Hide Done"),
                 ("m", "Move Task"),
+                ("s", "Star/Unstar Task"),
+                ("*", "Toggle Starred View"),
                 ("?", "Close Help"),
             ]
 
@@ -262,7 +270,7 @@ class UIManager:
             list_title = list_item.get("title", "Untitled List")
             list_id = list_item.get("id")
             undone, total = task_counts.get(list_id, (0, 0))
-            display_title = f"{list_title} ({undone}/{total})"
+            list_display = f"{list_title} ({undone}/{total})"
 
             is_active = list_item["id"] == active_list_id
             is_selected = self.active_panel == "lists" and idx == self.selected_list_idx
@@ -277,7 +285,7 @@ class UIManager:
             if is_selected:
                 attr |= color_pair(5)
 
-            mvwaddstr(win, y_pos, 1, f"{display_title:<{max_x - 2}}", attr)
+            mvwaddstr(win, y_pos, 1, f"{list_display:<{max_x - 2}}", attr)
             mvwaddstr(win, max_y - 1, 1, "[,] down [.] up [s] reset", A_DIM)
 
     def _draw_task_panel(
@@ -289,16 +297,18 @@ class UIManager:
         children_counts=None,
         hide_completed=False,
         preview_list_id=None,
+        show_starred=False,
     ):
         """Draws the individual Tasks."""
         werase(win)
-        if parent_task:
+        if show_starred:
+            title = "⭐ Starred"
+        elif parent_task:
             title = f"Tasks in {parent_task['title']}"
         elif preview_list_id:
             title = "Tasks (Preview)"
         else:
             title = "Tasks"
-        # Use color 3 (cyan) if tasks panel is active, else color 4 (yellow)
         border_color = 3 if self.active_panel == "tasks" else 4
         self._draw_border(win, title, border_color)
         max_y, max_x = getmaxyx(win)
@@ -311,32 +321,40 @@ class UIManager:
 
         if not tasks:
             attr = color_pair(5) if self.active_panel == "tasks" else A_DIM
-            mvwaddstr(win, 1, 2, "No tasks in this list.", attr)
+            msg = "No starred tasks." if show_starred else "No tasks in this list."
+            mvwaddstr(win, 1, 2, msg, attr)
             return
 
         for idx, task in enumerate(tasks):
-            task_title = task.get("title", "Untitled Task")
+            task_title = display_title(task)  # Strip ⭐ from display
+            starred = is_starred(task)
             status = task.get("status", "needsAction")
             is_selected = self.active_panel == "tasks" and idx == self.selected_task_idx
             has_children = task.get("id") in parent_ids
-            y_pos = idx + 1  # Start drawing content on line 1
+            y_pos = idx + 1
 
             if y_pos >= max_y - 2:
-                break  # Avoid drawing off the screen
+                break
 
-            # Determine colors and symbols
+            # Determine base color
             if status == "completed":
                 symbol = "✓"
                 attr = color_pair(2)  # Green
+            elif starred:
+                symbol = "○"
+                attr = color_pair(CP_STARRED) | A_BOLD  # Yellow bold for starred
             else:
                 symbol = "○"
                 attr = A_NORMAL
 
-            # Selected gets blue background
+            # Selected always overrides with blue
             if is_selected:
                 attr = color_pair(5)
 
-            # Build due date string if present
+            # Star indicator shown separately so non-starred tasks align cleanly
+            star_indicator = "⭐" if starred else "  "
+
+            # Due date
             due_date_str = ""
             if "due" in task:
                 try:
@@ -345,22 +363,19 @@ class UIManager:
                 except ValueError:
                     pass
 
-            # Note indicator
             note_indicator = "📝" if "notes" in task and task["notes"] else ""
 
-            # Children indicator
             children_count = children_counts.get(task["id"], 0)
-            children_indicator = f" ({children_count})" if children_count > 0 else ""
-            if has_children and children_count > 0:
-                children_indicator = f" ⤵{children_count}"
+            children_indicator = f" ⤵{children_count}" if has_children and children_count > 0 else ""
 
-            display_line = f"{symbol} {note_indicator}{task_title}{due_date_str}{children_indicator}"
-            # Truncate if too long, ensuring space for selection highlight
+            display_line = f"{symbol} {star_indicator}{note_indicator}{task_title}{due_date_str}{children_indicator}"
             mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
 
-        # Draw hide_completed indicator
+        # Bottom hints
         filter_text = "[f] show done" if hide_completed else "[f] hide done"
         mvwaddstr(win, max_y - 1, max_x - 15, filter_text, A_DIM)
+        star_hint = "[*] all lists" if show_starred else "[*] starred"
+        mvwaddstr(win, max_y - 1, 1, star_hint, A_DIM)
 
     def _draw_subtask_panel(self, win, subtasks, selected_task):
         """Draws the subtasks panel at the bottom."""
