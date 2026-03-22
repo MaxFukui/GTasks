@@ -214,6 +214,8 @@ class UIManager:
                 ("p", "Paste List"),
                 ("o", "New List"),
                 ("?", "Close Help"),
+                ("", ""),
+                ("Note:", "⭐ Favorites is always at top"),
             ]
         else:
             controls = [
@@ -269,8 +271,14 @@ class UIManager:
         for idx, list_item in enumerate(lists):
             list_title = list_item.get("title", "Untitled List")
             list_id = list_item.get("id")
-            undone, total = task_counts.get(list_id, (0, 0))
-            list_display = f"{list_title} ({undone}/{total})"
+            is_special = list_item.get("_is_special", False)
+
+            # Special handling for Favorites list
+            if is_special:
+                list_display = list_title  # Don't show counts for Favorites
+            else:
+                undone, total = task_counts.get(list_id, (0, 0))
+                list_display = f"{list_title} ({undone}/{total})"
 
             is_active = list_item["id"] == active_list_id
             is_selected = self.active_panel == "lists" and idx == self.selected_list_idx
@@ -280,7 +288,9 @@ class UIManager:
                 break  # Avoid drawing off the screen
 
             attr = A_NORMAL
-            if is_active:
+            if is_special:
+                attr |= color_pair(6)  # Magenta for special lists like Favorites
+            elif is_active:
                 attr |= color_pair(4)  # Yellow for the currently loaded list
             if is_selected:
                 attr |= color_pair(5)
@@ -366,7 +376,9 @@ class UIManager:
             note_indicator = "📝" if "notes" in task and task["notes"] else ""
 
             children_count = children_counts.get(task["id"], 0)
-            children_indicator = f" ⤵{children_count}" if has_children and children_count > 0 else ""
+            children_indicator = (
+                f" ⤵{children_count}" if has_children and children_count > 0 else ""
+            )
 
             display_line = f"{symbol} {star_indicator}{note_indicator}{task_title}{due_date_str}{children_indicator}"
             mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)

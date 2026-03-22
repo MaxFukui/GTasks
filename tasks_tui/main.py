@@ -13,6 +13,10 @@ import subprocess
 import tempfile
 from unicurses import wrapper
 
+# Special list IDs
+FAVORITES_LIST_ID = "__favorites__"
+FAVORITES_LIST_TITLE = "⭐ Favorites"
+
 
 def open_editor_for_task_notes(stdscr, app_state, ui_manager):
     """Opens an editor for the task notes."""
@@ -74,7 +78,9 @@ class AppState:
             ]
         self.service.set_list_order(self.list_order)
 
-        self.task_lists = self.service.get_task_lists(self.list_order)
+        # Get regular lists and add Favorites at the top
+        regular_lists = self.service.get_task_lists(self.list_order)
+        self.task_lists = self._create_favorites_list(regular_lists)
 
         self.current_parent_task_id = None
         self.filtered_tasks_cache = {}  # Cache for filtered tasks
@@ -90,6 +96,30 @@ class AppState:
         self.parent_task_id_stack = []
         self.parent_task_idx_stack = []
         self.calculate_task_counts()
+
+    def _create_favorites_list(self, regular_lists):
+        """Creates the Favorites list and ensures it's always at the top."""
+        favorites_list = {
+            "id": FAVORITES_LIST_ID,
+            "title": FAVORITES_LIST_TITLE,
+            "_is_special": True,  # Mark as special list
+        }
+        return [favorites_list] + regular_lists
+
+    def get_favorite_tasks(self):
+        """Returns all starred tasks from all lists for the Favorites view."""
+        favorite_tasks = []
+        for task_list in self.service.get_task_lists(self.list_order):
+            list_id = task_list["id"]
+            tasks = self.service.get_tasks_for_list(list_id)
+            for task in tasks:
+                if is_starred(task) and not task.get("deleted"):
+                    # Add list context to task for display
+                    task_copy = task.copy()
+                    task_copy["_list_id"] = list_id
+                    task_copy["_list_title"] = task_list.get("title", "Untitled")
+                    favorite_tasks.append(task_copy)
+        return favorite_tasks
 
     def save_config(self):
         """Saves current configuration to disk."""
@@ -172,15 +202,17 @@ class AppState:
 
     def refresh_data(self):
         """Refreshes all data from the service layer and clears the cache."""
-        self.task_lists = self.service.get_task_lists(self.list_order)
+        regular_lists = self.service.get_task_lists(self.list_order)
+        self.task_lists = self._create_favorites_list(regular_lists)
         self.filtered_tasks_cache.clear()  # Invalidate the cache
         self.tasks = self.get_tasks_for_active_list()
         self.calculate_task_counts()
 
     def move_list_up(self, list_idx, ui_manager):
         """Moves a list up in the order."""
-        # Use task_lists length for bounds checking (excludes deleted lists)
-        if list_idx > 0 and list_idx < len(self.task_lists):
+        # Skip if trying to move Favorites list (index 0) or if already at top
+        # Note: index 1 is the first regular list, so list_idx must be > 1 to move up
+        if list_idx > 1 and list_idx < len(self.task_lists):
             # Get the actual list IDs from task_lists (not list_order which may have deleted lists)
             list_id_to_move = self.task_lists[list_idx]["id"]
             list_id_above = self.task_lists[list_idx - 1]["id"]
@@ -198,7 +230,8 @@ class AppState:
             )
             self.service.set_list_order(self.list_order)
             # Refresh task_lists to match new order
-            self.task_lists = self.service.get_task_lists(self.list_order)
+            regular_lists = self.service.get_task_lists(self.list_order)
+            self.task_lists = self._create_favorites_list(regular_lists)
             # Update selection
             ui_manager.selected_list_idx = list_idx - 1
             # Update preview to show the list at the new position
@@ -208,8 +241,8 @@ class AppState:
 
     def move_list_down(self, list_idx, ui_manager):
         """Moves a list down in the order."""
-        # Use task_lists length for bounds checking (excludes deleted lists)
-        if list_idx < len(self.task_lists) - 1 and list_idx >= 0:
+        # Skip if trying to move Favorites list (index 0)
+        if list_idx > 0 and list_idx < len(self.task_lists) - 1:
             # Get the actual list IDs from task_lists (not list_order which may have deleted lists)
             list_id_to_move = self.task_lists[list_idx]["id"]
             list_id_below = self.task_lists[list_idx + 1]["id"]
@@ -227,7 +260,8 @@ class AppState:
             )
             self.service.set_list_order(self.list_order)
             # Refresh task_lists to match new order
-            self.task_lists = self.service.get_task_lists(self.list_order)
+            regular_lists = self.service.get_task_lists(self.list_order)
+            self.task_lists = self._create_favorites_list(regular_lists)
             # Update selection
             ui_manager.selected_list_idx = list_idx + 1
             # Update preview to show the list at the new position
