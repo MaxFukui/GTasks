@@ -113,12 +113,14 @@ class AppState:
             list_id = task_list["id"]
             tasks = self.service.get_tasks_for_list(list_id)
             for task in tasks:
-                if is_starred(task) and not task.get("deleted"):
-                    # Add list context to task for display
-                    task_copy = task.copy()
-                    task_copy["_list_id"] = list_id
-                    task_copy["_list_title"] = task_list.get("title", "Untitled")
-                    favorite_tasks.append(task_copy)
+                if not is_starred(task):
+                    continue
+                if self.hide_completed and task.get("status") == "completed":
+                    continue
+                task_copy = task.copy()
+                task_copy["_list_id"] = list_id
+                task_copy["_list_title"] = task_list.get("title", "Untitled")
+                favorite_tasks.append(task_copy)
         return favorite_tasks
 
     def save_config(self):
@@ -134,13 +136,18 @@ class AppState:
         """Calculates the number of tasks (undone/total) in each list."""
         for task_list in self.task_lists:
             list_id = task_list["id"]
-            tasks = self.service.get_tasks_for_list(list_id)
+            if list_id == FAVORITES_LIST_ID:
+                tasks = self.get_favorite_tasks()
+            else:
+                tasks = self.service.get_tasks_for_list(list_id)
             total = len(tasks)
             undone = len([t for t in tasks if t.get("status") != "completed"])
             self.task_counts[list_id] = (undone, total)
 
     def get_list_id_for_task(self, task):
-        """Returns the correct list_id for a task, handling starred view."""
+        """Returns the correct list_id for a task, handling starred/favorites view."""
+        if self.active_list_id == FAVORITES_LIST_ID:
+            return task.get("_list_id")
         if self.show_starred:
             return self.starred_list_context.get(task.get("id"))
         return self.active_list_id
@@ -194,6 +201,9 @@ class AppState:
 
     def get_preview_tasks(self, list_id):
         """Retrieves tasks for previewing a list without making it active."""
+        if list_id == FAVORITES_LIST_ID:
+            return self.get_favorite_tasks()
+
         if list_id not in self.filtered_tasks_cache or self.service.dirty:
             tasks = self.service.get_tasks_for_list(list_id)
             self.filtered_tasks_cache[list_id] = tasks

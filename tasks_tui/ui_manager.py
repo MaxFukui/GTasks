@@ -273,12 +273,8 @@ class UIManager:
             list_id = list_item.get("id")
             is_special = list_item.get("_is_special", False)
 
-            # Special handling for Favorites list
-            if is_special:
-                list_display = list_title  # Don't show counts for Favorites
-            else:
-                undone, total = task_counts.get(list_id, (0, 0))
-                list_display = f"{list_title} ({undone}/{total})"
+            undone, total = task_counts.get(list_id, (0, 0))
+            list_display = f"{list_title} ({undone}/{total})"
 
             is_active = list_item["id"] == active_list_id
             is_selected = self.active_panel == "lists" and idx == self.selected_list_idx
