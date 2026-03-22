@@ -284,12 +284,13 @@ class UIManager:
                 break  # Avoid drawing off the screen
 
             attr = A_NORMAL
-            if is_special:
+            if is_selected:
+                # High contrast selection - takes priority over everything
+                attr |= color_pair(5)
+            elif is_special:
                 attr |= color_pair(6)  # Magenta for special lists like Favorites
             elif is_active:
                 attr |= color_pair(4)  # Yellow for the currently loaded list
-            if is_selected:
-                attr |= color_pair(5)
 
             mvwaddstr(win, y_pos, 1, f"{list_display:<{max_x - 2}}", attr)
             mvwaddstr(win, max_y - 1, 1, "[,] down [.] up [s] reset", A_DIM)
