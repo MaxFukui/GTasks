@@ -147,6 +147,10 @@ class AppState:
 
     def get_tasks_for_active_list(self):
         """Retrieves tasks for the active list, using cache if possible."""
+        # Handle Favorites list - show all starred tasks
+        if self.active_list_id == FAVORITES_LIST_ID:
+            return self.get_favorite_tasks()
+
         if self.show_starred:
             self.starred_list_context = {}
             starred = self.service.get_starred_tasks()
