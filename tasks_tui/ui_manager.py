@@ -155,20 +155,25 @@ class UIManager:
         )  # Lists take up at least 25 chars or 1/4th of the screen
         task_width = w - list_width
 
-        # Determine if we need a subtask panel
-        subtask_panel_height = 0
+        # Determine bottom panel: subtasks take priority, then notes
+        bottom_panel_height = 0
+        show_notes_panel = False
         if subtasks and len(subtasks) > 0:
-            subtask_panel_height = min(len(subtasks) + 2, h // 3)
+            bottom_panel_height = min(len(subtasks) + 2, h // 3)
+        elif selected_task and selected_task.get("notes"):
+            note_lines = selected_task["notes"].splitlines()
+            bottom_panel_height = min(len(note_lines) + 3, h // 3)
+            show_notes_panel = True
 
         # 2. Create window objects
         # Lists Window (Left Panel)
-        list_win = newwin(h - subtask_panel_height, list_width, 0, 0)
+        list_win = newwin(h - bottom_panel_height, list_width, 0, 0)
         # Tasks Window (Right Panel)
-        task_win = newwin(h - subtask_panel_height, task_width, 0, list_width)
-        # Subtasks Panel (Bottom)
-        subtask_win = None
-        if subtask_panel_height > 0:
-            subtask_win = newwin(subtask_panel_height, w, h - subtask_panel_height, 0)
+        task_win = newwin(h - bottom_panel_height, task_width, 0, list_width)
+        # Bottom Panel (subtasks or notes)
+        bottom_win = None
+        if bottom_panel_height > 0:
+            bottom_win = newwin(bottom_panel_height, w, h - bottom_panel_height, 0)
 
         # 3. Draw content inside the windows
         self._draw_list_panel(list_win, lists, active_list_id, task_counts)
@@ -183,15 +188,18 @@ class UIManager:
             show_starred=show_starred,
         )
 
-        # Draw subtask panel if available
-        if subtask_win:
-            self._draw_subtask_panel(subtask_win, subtasks, selected_task)
+        # Draw bottom panel if available
+        if bottom_win:
+            if show_notes_panel:
+                self._draw_notes_panel(bottom_win, selected_task)
+            else:
+                self._draw_subtask_panel(bottom_win, subtasks, selected_task)
 
         # 4. Refresh all windows
         wrefresh(list_win)
         wrefresh(task_win)
-        if subtask_win:
-            wrefresh(subtask_win)
+        if bottom_win:
+            wrefresh(bottom_win)
 
         if self.show_help:
             self._draw_help_panel(self.active_panel)
@@ -441,6 +449,35 @@ class UIManager:
         # Draw help text at bottom of panel
         help_text = "[Enter] open  [c] toggle  [d] delete"
         mvwaddstr(win, max_y - 1, 1, help_text, A_DIM)
+
+    def _draw_notes_panel(self, win, task):
+        """Draws the notes panel at the bottom for the selected task."""
+        werase(win)
+        max_y, max_x = getmaxyx(win)
+
+        wattron(win, color_pair(3))
+        box(win, 0, 0)
+        wattroff(win, color_pair(3))
+
+        title = f" 📝 Notes: {display_title(task)} "
+        mvwaddstr(win, 0, 2, title[: max_x - 4], color_pair(3) | A_BOLD)
+
+        notes = task.get("notes", "")
+        lines = []
+        for raw_line in notes.splitlines():
+            # Word-wrap each source line to fit the panel width
+            while len(raw_line) > max_x - 4:
+                lines.append(raw_line[: max_x - 4])
+                raw_line = raw_line[max_x - 4 :]
+            lines.append(raw_line)
+
+        for idx, line in enumerate(lines):
+            y = idx + 1
+            if y >= max_y - 1:
+                break
+            mvwaddstr(win, y, 2, line)
+
+        mvwaddstr(win, max_y - 1, 1, "[i] edit notes", A_DIM)
 
     def update_task_selection(self, tasks, direction):
         """Moves the task selection cursor (up/down)."""
