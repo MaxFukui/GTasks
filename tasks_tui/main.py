@@ -377,6 +377,11 @@ def handle_input(stdscr, app_state, ui_manager):
             selected_task = app_state.tasks[ui_manager.selected_task_idx]
             app_state.parent_task_id_stack.append(app_state.current_parent_task_id)
             app_state.parent_task_idx_stack.append(ui_manager.selected_task_idx)
+            # In Favorites, switch to the task's real list before entering subtasks
+            if app_state.active_list_id == FAVORITES_LIST_ID:
+                real_list_id = selected_task.get("_list_id")
+                if real_list_id:
+                    app_state.change_active_list(real_list_id)
             app_state.current_parent_task_id = selected_task["id"]
             app_state.refresh_data()
             ui_manager.selected_task_idx = 0
@@ -674,8 +679,20 @@ def main_loop(stdscr):
                     app_state.active_list_id, app_state.current_parent_task_id
                 )
 
-            parent_ids = app_state.service.get_parent_task_ids(display_list_id)
-            children_counts = app_state.service.get_children_counts(display_list_id)
+            # For the Favorites virtual list, aggregate parent/children info
+            # across all the real list IDs represented in the displayed tasks
+            if display_list_id == FAVORITES_LIST_ID:
+                real_list_ids = set(
+                    t.get("_list_id") for t in display_tasks if t.get("_list_id")
+                )
+                parent_ids = set()
+                children_counts = {}
+                for lid in real_list_ids:
+                    parent_ids |= app_state.service.get_parent_task_ids(lid)
+                    children_counts.update(app_state.service.get_children_counts(lid))
+            else:
+                parent_ids = app_state.service.get_parent_task_ids(display_list_id)
+                children_counts = app_state.service.get_children_counts(display_list_id)
 
             # Get subtasks for selected task (for bottom panel)
             selected_task = None
@@ -688,8 +705,9 @@ def main_loop(stdscr):
                 selected_task = display_tasks[ui_manager.selected_task_idx]
                 if selected_task:
                     if selected_task.get("id") in parent_ids:
+                        real_list_id = app_state.get_list_id_for_task(selected_task)
                         subtasks = app_state.service.get_subtasks(
-                            display_list_id, selected_task["id"]
+                            real_list_id, selected_task["id"]
                         )
 
             ui_manager.draw_layout(
