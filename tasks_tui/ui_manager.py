@@ -322,6 +322,7 @@ class UIManager:
         if show_favorites:
             title = "⭐ Favorites"
         elif show_starred:
+            title = "⭐ Starred"
         elif parent_task:
             title = f"Tasks in {parent_task['title']}"
         elif preview_list_id:
