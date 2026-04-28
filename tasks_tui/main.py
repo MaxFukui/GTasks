@@ -723,6 +723,7 @@ def main_loop(stdscr):
                 subtasks=subtasks,
                 preview_list_id=display_list_id if is_preview else None,
                 show_starred=app_state.show_starred,
+                show_favorites=app_state.active_list_id == FAVORITES_LIST_ID,
             )
         except Exception as e:
             # Handles window resize errors gracefully

@@ -146,6 +146,7 @@ class UIManager:
         subtasks=None,
         preview_list_id=None,
         show_starred=False,
+        show_favorites=False,
     ):
         h, w = getmaxyx(self.stdscr)
 
@@ -186,6 +187,7 @@ class UIManager:
             hide_completed,
             preview_list_id=preview_list_id,
             show_starred=show_starred,
+            show_favorites=show_favorites,
         )
 
         # Draw bottom panel if available
@@ -313,11 +315,13 @@ class UIManager:
         hide_completed=False,
         preview_list_id=None,
         show_starred=False,
+        show_favorites=False,
     ):
         """Draws the individual Tasks."""
         werase(win)
-        if show_starred:
-            title = "⭐ Starred"
+        if show_favorites:
+            title = "⭐ Favorites"
+        elif show_starred:
         elif parent_task:
             title = f"Tasks in {parent_task['title']}"
         elif preview_list_id:
@@ -386,7 +390,17 @@ class UIManager:
             )
 
             display_line = f"{symbol} {star_indicator}{note_indicator}{task_title}{due_date_str}{children_indicator}"
-            mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
+
+            list_suffix = (
+                f" @ {task['_list_title']}" if task.get("_list_title") else ""
+            )
+            if list_suffix:
+                available = max_x - 2 - len(list_suffix)
+                main_line = display_line[:available]
+                mvwaddstr(win, y_pos, 1, main_line, attr)
+                mvwaddstr(win, y_pos, 1 + len(main_line), list_suffix, A_DIM)
+            else:
+                mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
 
         # Bottom hints
         filter_text = "[f] show done" if hide_completed else "[f] hide done"
