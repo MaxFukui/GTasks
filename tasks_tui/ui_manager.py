@@ -397,14 +397,17 @@ class UIManager:
             )
             if list_suffix:
                 total = max_x - 2
-                if len(display_line) + len(list_suffix) <= total:
+                suffix_len = len(list_suffix)
+                available_for_title = total - suffix_len
+                if len(display_line) <= available_for_title:
                     mvwaddstr(win, y_pos, 1, display_line, attr)
-                    mvwaddstr(win, y_pos, 1 + len(display_line), list_suffix, A_DIM)
                 else:
-                    available = total - len(list_suffix)
-                    main_line = display_line[: available - 1] + "…"
+                    main_line = display_line[: available_for_title - 1] + "…"
                     mvwaddstr(win, y_pos, 1, main_line, attr)
-                    mvwaddstr(win, y_pos, 1 + len(main_line), list_suffix, A_DIM)
+                # Use getyx so curses tells us the real column after wide chars (e.g. ⭐)
+                _, x_cur = getyx(win)
+                if x_cur + suffix_len < max_x:
+                    mvwaddstr(win, y_pos, x_cur, list_suffix, A_DIM)
             else:
                 mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
 
