@@ -396,10 +396,15 @@ class UIManager:
                 f" @ {task['_list_title']}" if task.get("_list_title") else ""
             )
             if list_suffix:
-                available = max_x - 2 - len(list_suffix)
-                main_line = display_line[:available]
-                mvwaddstr(win, y_pos, 1, main_line, attr)
-                mvwaddstr(win, y_pos, 1 + len(main_line), list_suffix, A_DIM)
+                total = max_x - 2
+                if len(display_line) + len(list_suffix) <= total:
+                    mvwaddstr(win, y_pos, 1, display_line, attr)
+                    mvwaddstr(win, y_pos, 1 + len(display_line), list_suffix, A_DIM)
+                else:
+                    available = total - len(list_suffix)
+                    main_line = display_line[: available - 1] + "…"
+                    mvwaddstr(win, y_pos, 1, main_line, attr)
+                    mvwaddstr(win, y_pos, 1 + len(main_line), list_suffix, A_DIM)
             else:
                 mvwaddstr(win, y_pos, 1, display_line[: max_x - 2], attr)
 
