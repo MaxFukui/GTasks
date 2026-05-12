@@ -149,6 +149,7 @@ class UIManager:
         preview_list_id=None,
         show_starred=False,
         show_favorites=False,
+        is_dirty=False,
     ):
         h, w = getmaxyx(self.stdscr)
 
@@ -190,6 +191,7 @@ class UIManager:
             preview_list_id=preview_list_id,
             show_starred=show_starred,
             show_favorites=show_favorites,
+            is_dirty=is_dirty,
         )
 
         # Draw bottom panel if available
@@ -319,6 +321,7 @@ class UIManager:
         preview_list_id=None,
         show_starred=False,
         show_favorites=False,
+        is_dirty=False,
     ):
         """Draws the individual Tasks."""
         werase(win)
@@ -332,6 +335,8 @@ class UIManager:
             title = "Tasks (Preview)"
         else:
             title = "Tasks"
+        if is_dirty:
+            title += " ●"
         border_color = 3 if self.active_panel == "tasks" else 4
         self._draw_border(win, title, border_color)
         max_y, max_x = getmaxyx(win)

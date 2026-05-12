@@ -7,6 +7,7 @@ from .task_service import TaskService, is_starred, display_title
 from .ui_manager import UIManager
 from . import local_storage
 import sys
+import threading
 from dateutil.parser import ParserError, isoparse
 import os
 import subprocess
@@ -96,6 +97,9 @@ class AppState:
         self.parent_task_id_stack = []
         self.parent_task_idx_stack = []
         self.calculate_task_counts()
+        self.auto_sync_pending = False
+        self._sync_timer = None
+        self.AUTO_SYNC_DELAY = 30  # seconds of inactivity before auto-sync
 
     def _create_favorites_list(self, regular_lists):
         """Creates the Favorites list and ensures it's always at the top."""
@@ -143,6 +147,17 @@ class AppState:
             total = len(tasks)
             undone = len([t for t in tasks if t.get("status") != "completed"])
             self.task_counts[list_id] = (undone, total)
+
+    def schedule_auto_sync(self):
+        """Debounced: resets the 30-second countdown on every change."""
+        if self._sync_timer and self._sync_timer.is_alive():
+            self._sync_timer.cancel()
+        self._sync_timer = threading.Timer(self.AUTO_SYNC_DELAY, self._mark_sync_pending)
+        self._sync_timer.daemon = True
+        self._sync_timer.start()
+
+    def _mark_sync_pending(self):
+        self.auto_sync_pending = True
 
     def get_list_id_for_task(self, task):
         """Returns the correct list_id for a task, handling starred/favorites view."""
@@ -221,6 +236,8 @@ class AppState:
         self.filtered_tasks_cache.clear()  # Invalidate the cache
         self.tasks = self.get_tasks_for_active_list()
         self.calculate_task_counts()
+        if self.service.dirty:
+            self.schedule_auto_sync()
 
     def move_list_up(self, list_idx, ui_manager):
         """Moves a list up in the order."""
@@ -309,6 +326,16 @@ def handle_input(stdscr, app_state, ui_manager):
         key = getch()
     except curses.error:
         return True  # Ignore curses errors on getch()
+
+    # Timeout (no key pressed) — check for pending auto-sync
+    if key == -1:
+        if app_state.auto_sync_pending and app_state.service.dirty:
+            app_state.auto_sync_pending = False
+            ui_manager.start_sync_animation()
+            app_state.service.sync_to_google()
+            ui_manager.stop_sync_animation()
+            app_state.refresh_data()
+        return True
 
     # Quitting
     if key in [ord("q"), ord("Q")]:
@@ -666,6 +693,7 @@ def main_loop(stdscr):
     noecho()
     cbreak()
     keypad(stdscr, True)
+    wtimeout(stdscr, 500)  # Wake up every 500ms to check for auto-sync
 
     ui_manager.start_sync_animation()
     app_state.service.sync_from_google()
@@ -737,6 +765,7 @@ def main_loop(stdscr):
                 preview_list_id=display_list_id if is_preview else None,
                 show_starred=app_state.show_starred,
                 show_favorites=app_state.active_list_id == FAVORITES_LIST_ID,
+                is_dirty=app_state.service.dirty,
             )
         except Exception as e:
             # Handles window resize errors gracefully
