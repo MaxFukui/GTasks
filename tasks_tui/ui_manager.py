@@ -6,6 +6,8 @@
 from unicurses import *
 from dateutil.parser import isoparse
 import time
+import datetime
+import tempfile
 import threading
 import subprocess
 import os
@@ -239,7 +241,8 @@ class UIManager:
                 ("i", "Edit Notes"),
                 ("d", "Delete Task"),
                 ("p", "Paste Task"),
-                ("o", "New Task"),
+                ("o", "New Task (quick)"),
+                ("O", "New Task (full form)"),
                 ("f", "Toggle Hide Done"),
                 ("m", "Move Task"),
                 ("s", "Star/Unstar Task"),
@@ -764,6 +767,212 @@ class UIManager:
                 selected_idx = 0
 
             delwin(modal_win)
+
+    def show_new_task_form(self):
+        """
+        Full-detail task creation form with vim modal feel.
+        Returns {"title", "due", "notes"} or None if cancelled.
+        """
+        MONTHS = [
+            {"title": "01 - January"},  {"title": "02 - February"},
+            {"title": "03 - March"},    {"title": "04 - April"},
+            {"title": "05 - May"},      {"title": "06 - June"},
+            {"title": "07 - July"},     {"title": "08 - August"},
+            {"title": "09 - September"},{"title": "10 - October"},
+            {"title": "11 - November"}, {"title": "12 - December"},
+        ]
+        MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun",
+                      "Jul","Aug","Sep","Oct","Nov","Dec"]
+        LABELS = ["Title", "Due", "Notes"]
+        LABEL_W = 12  # "  Title   › " width
+
+        # Mutable state dict avoids nonlocal in nested functions
+        s = {
+            "field": 0,       # 0=title, 1=due, 2=notes
+            "insert": False,
+            "title": [],      # list of chars
+            "tcursor": 0,
+            "due_display": "",
+            "due_iso": "",
+            "notes": "",
+        }
+
+        def draw(win=None):
+            """Draw the form, create window if not given."""
+            if win:
+                delwin(win)
+            h, w = getmaxyx(self.stdscr)
+            form_h, form_w = 13, min(64, w - 4)
+            form_y = (h - form_h) // 2
+            form_x = (w - form_w) // 2
+            fw = newwin(form_h, form_w, form_y, form_x)
+            werase(fw)
+            keypad(fw, True)
+
+            # Border: yellow in INSERT, cyan in NORMAL
+            bc = color_pair(4) if s["insert"] else color_pair(3)
+            wattron(fw, bc | A_BOLD)
+            box(fw, 0, 0)
+            wattroff(fw, bc | A_BOLD)
+
+            mode = "INSERT" if s["insert"] else "NORMAL"
+            mvwaddstr(fw, 0, 2, f" New Task — {mode} ", bc | A_BOLD)
+
+            values = [
+                "".join(s["title"]),
+                s["due_display"] or "[not set]",
+                (s["notes"].splitlines()[0] if s["notes"] else "[no notes]"),
+            ]
+
+            row_ys = [2, 5, 8]
+            for i, (label, value) in enumerate(zip(LABELS, values)):
+                y = row_ys[i]
+                label_str = f"  {label:<6}  › "
+                val_x = 1 + len(label_str)
+                max_val = form_w - val_x - 2
+                is_sel = (i == s["field"])
+
+                if is_sel and not s["insert"]:
+                    # NORMAL selected: full-row blue
+                    mvwaddstr(fw, y, 0, " " * form_w, color_pair(5))
+                    mvwaddstr(fw, y, 1, label_str, color_pair(5) | A_BOLD)
+                    mvwaddstr(fw, y, val_x, value[:max_val], color_pair(5))
+                elif is_sel and s["insert"]:
+                    # INSERT selected: full-row yellow
+                    mvwaddstr(fw, y, 0, " " * form_w, color_pair(4) | A_DIM)
+                    mvwaddstr(fw, y, 1, label_str, color_pair(4) | A_BOLD)
+                    if i == 0:
+                        # Title: show with cursor
+                        scroll = max(0, s["tcursor"] - max_val + 1)
+                        disp = "".join(s["title"])[scroll: scroll + max_val]
+                        mvwaddstr(fw, y, val_x, disp, color_pair(4))
+                        wmove(fw, y, val_x + min(s["tcursor"] - scroll, max_val))
+                    else:
+                        mvwaddstr(fw, y, val_x, value[:max_val], color_pair(4))
+                else:
+                    mvwaddstr(fw, y, 1, label_str, A_DIM)
+                    mvwaddstr(fw, y, val_x, value[:max_val])
+
+                # Hint line below each field
+                if i == 0 and is_sel:
+                    hint = "type title, Esc to exit insert" if s["insert"] else "i/Enter → insert"
+                    mvwaddstr(fw, y + 1, val_x, hint, A_DIM)
+                elif i == 1 and is_sel:
+                    mvwaddstr(fw, y + 1, val_x, "i/Enter → pick month › day › year", A_DIM)
+                elif i == 2 and is_sel:
+                    mvwaddstr(fw, y + 1, val_x, "i/Enter → open $EDITOR (neovim)", A_DIM)
+
+            # Bottom status bar
+            if s["insert"] and s["field"] == 0:
+                mvwaddstr(fw, form_h - 2, 2, "-- INSERT --", color_pair(4) | A_BOLD)
+                curs_set(1)
+            else:
+                curs_set(0)
+            bottom = "[w] save  [q] cancel" if not s["insert"] else "[Esc] normal mode"
+            mvwaddstr(fw, form_h - 2, form_w - len(bottom) - 2, bottom, A_DIM)
+
+            wrefresh(fw)
+            return fw
+
+        def pick_due():
+            month_idx = self.show_fuzzy_search(MONTHS, title="Pick Month")
+            if month_idx is None:
+                return
+            month_num = month_idx + 1
+
+            day_str = self.get_user_input("Day (1-31): ")
+            if not day_str or not day_str.strip().isdigit():
+                return
+            day = int(day_str.strip())
+            if not (1 <= day <= 31):
+                return
+
+            today_year = str(datetime.date.today().year)
+            year_str = self.get_user_input("Year: ", default=today_year)
+            if not year_str or not year_str.strip().isdigit() or len(year_str.strip()) != 4:
+                return
+            year = int(year_str.strip())
+
+            try:
+                date_obj = datetime.date(year, month_num, day)
+                s["due_display"] = f"{MONTH_ABBR[month_idx]} {day:02d} {year}"
+                s["due_iso"] = date_obj.isoformat()
+            except ValueError:
+                self.show_temporary_message(f"Invalid date: {month_num}/{day}/{year}")
+
+        def open_notes_editor():
+            with tempfile.NamedTemporaryFile(
+                suffix=".md", delete=False, mode="w+", encoding="utf-8"
+            ) as tf:
+                tf.write(s["notes"])
+                tmp = tf.name
+            editor = os.environ.get("EDITOR", "vim")
+            def_prog_mode()
+            endwin()
+            subprocess.call([editor, tmp])
+            reset_prog_mode()
+            doupdate()
+            with open(tmp, "r", encoding="utf-8") as tf:
+                s["notes"] = tf.read().rstrip()
+            os.remove(tmp)
+
+        win = None
+        try:
+            while True:
+                win = draw(win)
+                key = wgetch(win)
+
+                if not s["insert"]:
+                    # ── NORMAL MODE ──────────────────────────────────
+                    if key in [ord("j"), KEY_DOWN]:
+                        s["field"] = min(2, s["field"] + 1)
+                    elif key in [ord("k"), KEY_UP]:
+                        s["field"] = max(0, s["field"] - 1)
+                    elif key in [ord("i"), ord("\n"), ord("\r"), KEY_ENTER]:
+                        if s["field"] == 0:
+                            s["insert"] = True
+                        elif s["field"] == 1:
+                            pick_due()
+                        elif s["field"] == 2:
+                            open_notes_editor()
+                    elif key == ord("w"):
+                        if s["title"]:
+                            return {
+                                "title": "".join(s["title"]),
+                                "due": s["due_iso"],
+                                "notes": s["notes"],
+                            }
+                        self.show_temporary_message("Title is required to save")
+                    elif key in [27, ord("q")]:
+                        return None
+                else:
+                    # ── INSERT MODE (title field only) ────────────────
+                    if key == 27:  # Esc → normal
+                        s["insert"] = False
+                    elif key in [ord("\n"), ord("\r"), KEY_ENTER]:
+                        s["insert"] = False
+                    elif key in [KEY_BACKSPACE, 127, 8]:
+                        if s["tcursor"] > 0:
+                            s["tcursor"] -= 1
+                            s["title"].pop(s["tcursor"])
+                    elif key == KEY_DC:
+                        if s["tcursor"] < len(s["title"]):
+                            s["title"].pop(s["tcursor"])
+                    elif key == KEY_LEFT:
+                        s["tcursor"] = max(0, s["tcursor"] - 1)
+                    elif key == KEY_RIGHT:
+                        s["tcursor"] = min(len(s["title"]), s["tcursor"] + 1)
+                    elif key == KEY_HOME:
+                        s["tcursor"] = 0
+                    elif key == KEY_END:
+                        s["tcursor"] = len(s["title"])
+                    elif 32 <= key <= 126:
+                        s["title"].insert(s["tcursor"], chr(key))
+                        s["tcursor"] += 1
+        finally:
+            if win:
+                delwin(win)
+            curs_set(0)
 
     def _sync_animation(self):
         """The actual animation loop to be run in a thread."""

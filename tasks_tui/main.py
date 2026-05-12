@@ -601,6 +601,19 @@ def handle_input(stdscr, app_state, ui_manager):
                         app_state.preview_list_id = new_list["id"]
                         break
 
+    elif key == ord("O"):
+        if ui_manager.active_panel == "tasks" and app_state.active_list_id != FAVORITES_LIST_ID:
+            result = ui_manager.show_new_task_form()
+            if result and result["title"]:
+                list_id = app_state.active_list_id
+                parent = app_state.current_parent_task_id
+                new_task = app_state.service.add_task(list_id, result["title"], parent=parent)
+                if new_task and result["due"]:
+                    app_state.service.change_date_task(list_id, new_task["id"], result["due"])
+                if new_task and result["notes"]:
+                    app_state.service.change_detail_task(list_id, new_task["id"], result["notes"])
+                app_state.refresh_data()
+
     elif key == ord("?"):
         ui_manager.toggle_help()
 
