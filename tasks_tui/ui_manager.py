@@ -111,6 +111,7 @@ class UIManager:
         self.show_help = False
         self.animation_frame = ""
         self.hide_completed = False
+        self.pending_g = False  # chord state for 'gg'
 
     def setup_colors(self):
         """Initializes color pairs for the TUI."""

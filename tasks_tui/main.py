@@ -353,6 +353,32 @@ def handle_input(stdscr, app_state, ui_manager):
         ui_manager.toggle_help()
         return True
 
+    # gg / G — jump to top or bottom
+    if key == ord("g"):
+        if ui_manager.pending_g:
+            ui_manager.pending_g = False
+            if ui_manager.active_panel == "lists" and app_state.task_lists:
+                ui_manager.selected_list_idx = 0
+                app_state.preview_list_id = app_state.task_lists[0]["id"]
+                ui_manager.selected_task_idx = 0
+            elif ui_manager.active_panel == "tasks" and app_state.tasks:
+                ui_manager.selected_task_idx = 0
+        else:
+            ui_manager.pending_g = True
+        return True
+    elif key == ord("G"):
+        ui_manager.pending_g = False
+        if ui_manager.active_panel == "lists" and app_state.task_lists:
+            ui_manager.selected_list_idx = len(app_state.task_lists) - 1
+            app_state.preview_list_id = app_state.task_lists[-1]["id"]
+            ui_manager.selected_task_idx = 0
+        elif ui_manager.active_panel == "tasks" and app_state.tasks:
+            ui_manager.selected_task_idx = len(app_state.tasks) - 1
+        return True
+
+    # Clear pending_g on any other key
+    ui_manager.pending_g = False
+
     # Movement
     if key == KEY_UP or key == ord("k"):
         if ui_manager.active_panel == "tasks":
