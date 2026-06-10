@@ -12,9 +12,28 @@ import threading
 import subprocess
 import os
 import re
+import unicodedata
 from tasks_tui.task_service import is_starred, display_title
 
 CP_STARRED = 9  # Yellow — starred task indicator
+
+
+def display_width(text):
+    """Returns the terminal column width of text, counting wide chars (emoji, CJK) as 2."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+
+def truncate_to_width(text, width):
+    """Truncates text so its terminal display width does not exceed `width`."""
+    result = []
+    total = 0
+    for c in text:
+        w = 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+        if total + w > width:
+            break
+        result.append(c)
+        total += w
+    return "".join(result)
 
 
 def fuzzy_match(pattern, text):
@@ -237,7 +256,7 @@ class UIManager:
                 ("q", "Quit and Sync"),
                 ("w", "Write and Sync"),
                 ("h/j/k/l", "Select Task"),
-                ("/", "Search Tasks"),
+                ("/", "Search Tasks (/ again: all lists)"),
                 ("c", "Toggle Complete"),
                 ("r", "Rename Task"),
                 ("a", "Add Due Date"),
@@ -685,10 +704,16 @@ class UIManager:
 
             delwin(modal_win)
 
-    def show_fuzzy_search(self, items, title="Search"):
-        """Shows a fuzzy search interface for finding items."""
+    def show_fuzzy_search(self, items, title="Search", expand_items=None, expand_title=None):
+        """Shows a fuzzy search interface for finding items.
+
+        If expand_items is given, pressing '/' once switches the search to that
+        item set (e.g. searching across every list instead of just the current
+        one), keeping the query typed so far. Returns (expanded, original_idx).
+        """
         search_query = ""
         selected_idx = 0
+        expanded = False
 
         while True:
             h, w = getmaxyx(self.stdscr)
@@ -730,24 +755,37 @@ class UIManager:
             ):
                 y_pos = display_idx + 3
                 title_text = item.get("title", "Untitled")
+                list_suffix = (
+                    f" @ {item['_list_title']}" if item.get("_list_title") else ""
+                )
+                is_selected = start_idx + display_idx == selected_idx
+                prefix = "> " if is_selected else "  "
+                attr = color_pair(5) if is_selected else 0
+                max_text_w = modal_w - 2 - len(prefix)
 
-                if start_idx + display_idx == selected_idx:
-                    mvwaddstr(
-                        modal_win,
-                        y_pos,
-                        1,
-                        f"> {title_text[: modal_w - 4]}",
-                        color_pair(5),
-                    )
+                if list_suffix:
+                    avail = max(max_text_w - len(list_suffix), 0)
+                    if display_width(title_text) > avail:
+                        title_text = truncate_to_width(title_text, max(avail - 1, 0)) + "…"
                 else:
-                    mvwaddstr(modal_win, y_pos, 1, f"  {title_text[: modal_w - 4]}")
+                    title_text = truncate_to_width(title_text, max_text_w)
+
+                mvwaddstr(modal_win, y_pos, 1, f"{prefix}{title_text}", attr)
+                if list_suffix:
+                    # Use getyx so curses tells us the real column after wide chars (e.g. ⭐)
+                    _, x_cur = getyx(modal_win)
+                    if x_cur + len(list_suffix) < modal_w:
+                        mvwaddstr(modal_win, y_pos, x_cur, list_suffix, A_DIM)
 
             # Show count
             count_str = f"({selected_idx + 1}/{len(filtered_items)})"
             mvwaddstr(
                 modal_win, modal_h - 2, modal_w - len(count_str) - 2, count_str, A_DIM
             )
-            mvwaddstr(modal_win, modal_h - 2, 1, "[Enter] select  [Esc] cancel", A_DIM)
+            footer = "[Enter] select  [Esc] cancel"
+            if expand_items is not None and not expanded:
+                footer += "  [/] search all"
+            mvwaddstr(modal_win, modal_h - 2, 1, footer, A_DIM)
 
             wrefresh(modal_win)
 
@@ -760,11 +798,16 @@ class UIManager:
             elif key in [ord("\n"), ord("\r"), KEY_ENTER]:
                 delwin(modal_win)
                 if filtered_items:
-                    return filtered_items[selected_idx][0]  # Return original index
-                return None
+                    return (expanded, filtered_items[selected_idx][0])  # Return original index
+                return (expanded, None)
             elif key in [27, ord("q")]:  # Escape
                 delwin(modal_win)
-                return None
+                return (expanded, None)
+            elif key == ord("/") and expand_items is not None and not expanded:
+                items = expand_items
+                title = expand_title or title
+                expanded = True
+                selected_idx = 0
             elif key == KEY_BACKSPACE or key == 127:  # Backspace
                 search_query = search_query[:-1]
                 selected_idx = 0
@@ -881,7 +924,7 @@ class UIManager:
             return fw
 
         def pick_due():
-            month_idx = self.show_fuzzy_search(MONTHS, title="Pick Month")
+            _, month_idx = self.show_fuzzy_search(MONTHS, title="Pick Month")
             if month_idx is None:
                 return
             month_num = month_idx + 1

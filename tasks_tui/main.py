@@ -127,6 +127,18 @@ class AppState:
                 favorite_tasks.append(task_copy)
         return favorite_tasks
 
+    def get_all_tasks_global(self):
+        """Returns every task (including subtasks) across all real lists, tagged with source list info."""
+        all_tasks = []
+        for task_list in self.service.get_task_lists(self.list_order):
+            list_id = task_list["id"]
+            for task in self.service.get_all_tasks_for_list(list_id):
+                task_copy = task.copy()
+                task_copy["_list_id"] = list_id
+                task_copy["_list_title"] = task_list.get("title", "Untitled")
+                all_tasks.append(task_copy)
+        return all_tasks
+
     def save_config(self):
         """Saves current configuration to disk."""
         config = {
@@ -317,6 +329,50 @@ class AppState:
             return True
         return False
 
+    def jump_to_task(self, task, ui_manager):
+        """Switches to a task's source list (and parent context) and selects it."""
+        target_list_id = task.get("_list_id")
+        if not target_list_id:
+            return
+
+        self.show_starred = False
+        self.parent_task_id_stack.clear()
+        self.parent_task_idx_stack.clear()
+        self.change_active_list(target_list_id)
+
+        parent_id = task.get("parent")
+        if parent_id:
+            self.parent_task_id_stack.append(None)
+            self.parent_task_idx_stack.append(0)
+            self.current_parent_task_id = parent_id
+
+        self.refresh_data()
+
+        # If the task is completed and currently hidden, reveal it so the jump lands on it
+        if (
+            self.hide_completed
+            and task.get("status") == "completed"
+            and not any(t["id"] == task["id"] for t in self.tasks)
+        ):
+            self.hide_completed = False
+            ui_manager.hide_completed = False
+            self.tasks = self.get_tasks_for_active_list()
+            self.save_config()
+
+        ui_manager.selected_task_idx = 0
+        for idx, t in enumerate(self.tasks):
+            if t["id"] == task["id"]:
+                ui_manager.selected_task_idx = idx
+                break
+
+        for idx, task_list in enumerate(self.task_lists):
+            if task_list["id"] == target_list_id:
+                ui_manager.selected_list_idx = idx
+                break
+
+        ui_manager.active_panel = "tasks"
+        self.preview_list_id = None
+
 
 def handle_input(stdscr, app_state, ui_manager):
     """
@@ -442,7 +498,7 @@ def handle_input(stdscr, app_state, ui_manager):
     # Fuzzy search (only in lists panel for now)
     if ui_manager.active_panel == "lists" and app_state.task_lists:
         if key == ord("/"):
-            result_idx = ui_manager.show_fuzzy_search(
+            _, result_idx = ui_manager.show_fuzzy_search(
                 app_state.task_lists, title="Search Lists"
             )
             if result_idx is not None:
@@ -451,14 +507,22 @@ def handle_input(stdscr, app_state, ui_manager):
                 ui_manager.selected_task_idx = 0
             return True
 
-    # Fuzzy search for tasks (only in tasks panel)
+    # Fuzzy search for tasks (only in tasks panel). Pressing '/' again inside
+    # the search expands it to a search across every list.
     if ui_manager.active_panel == "tasks" and app_state.tasks:
         if key == ord("/"):
-            result_idx = ui_manager.show_fuzzy_search(
-                app_state.tasks, title="Search Tasks"
+            global_tasks = app_state.get_all_tasks_global()
+            expanded, result_idx = ui_manager.show_fuzzy_search(
+                app_state.tasks,
+                title="Search Tasks",
+                expand_items=global_tasks,
+                expand_title="Search All Tasks",
             )
             if result_idx is not None:
-                ui_manager.selected_task_idx = result_idx
+                if expanded:
+                    app_state.jump_to_task(global_tasks[result_idx], ui_manager)
+                else:
+                    ui_manager.selected_task_idx = result_idx
             return True
 
     # List reordering (only in lists panel)

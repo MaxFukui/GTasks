@@ -104,6 +104,15 @@ class TaskService:
                 subtasks.append(task)
         return subtasks
 
+    def get_all_tasks_for_list(self, list_id=None):
+        """Fetches all non-deleted tasks (including subtasks) for the specified list."""
+        list_id = list_id or self.active_list_id
+        if not list_id:
+            return []
+        return [
+            task for task in self.data["tasks"].get(list_id, []) if not task.get("deleted")
+        ]
+
     def add_task(self, list_id, title, parent=None):
         """Adds a new task to the specified list in the local cache."""
         if not list_id:
