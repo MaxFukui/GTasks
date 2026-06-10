@@ -669,6 +669,7 @@ class UIManager:
             modal_x = (w - modal_w) // 2
 
             modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
+            keypad(modal_win, True)
             werase(modal_win)
             wborder(modal_win)
             mvwaddstr(modal_win, 0, 2, " Move to: ", color_pair(3) | A_BOLD)
@@ -723,6 +724,7 @@ class UIManager:
             modal_x = (w - modal_w) // 2
 
             modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
+            keypad(modal_win, True)
             werase(modal_win)
             wborder(modal_win)
             mvwaddstr(modal_win, 0, 2, f" {title} ", color_pair(3) | A_BOLD)
