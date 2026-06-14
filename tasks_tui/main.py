@@ -498,7 +498,7 @@ def handle_input(stdscr, app_state, ui_manager):
     # Fuzzy search (only in lists panel for now)
     if ui_manager.active_panel == "lists" and app_state.task_lists:
         if key == ord("/"):
-            _, result_idx = ui_manager.show_fuzzy_search(
+            _, result_idx, _ = ui_manager.show_fuzzy_search(
                 app_state.task_lists, title="Search Lists"
             )
             if result_idx is not None:
@@ -508,18 +508,26 @@ def handle_input(stdscr, app_state, ui_manager):
             return True
 
     # Fuzzy search for tasks (only in tasks panel). Pressing '/' again inside
-    # the search expands it to a search across every list.
+    # the search expands it to a search across every list, hiding completed
+    # tasks by default; pressing 'f' there toggles completed tasks back in.
     if ui_manager.active_panel == "tasks" and app_state.tasks:
         if key == ord("/"):
-            global_tasks = app_state.get_all_tasks_global()
-            expanded, result_idx = ui_manager.show_fuzzy_search(
+            global_tasks_all = app_state.get_all_tasks_global()
+            global_tasks_pending = [
+                t for t in global_tasks_all if t.get("status") != "completed"
+            ]
+            expanded, result_idx, show_completed = ui_manager.show_fuzzy_search(
                 app_state.tasks,
                 title="Search Tasks",
-                expand_items=global_tasks,
+                expand_items=global_tasks_pending,
                 expand_title="Search All Tasks",
+                expand_items_all=global_tasks_all,
             )
             if result_idx is not None:
                 if expanded:
+                    global_tasks = (
+                        global_tasks_all if show_completed else global_tasks_pending
+                    )
                     app_state.jump_to_task(global_tasks[result_idx], ui_manager)
                 else:
                     ui_manager.selected_task_idx = result_idx

@@ -705,16 +705,27 @@ class UIManager:
 
             delwin(modal_win)
 
-    def show_fuzzy_search(self, items, title="Search", expand_items=None, expand_title=None):
+    def show_fuzzy_search(
+        self,
+        items,
+        title="Search",
+        expand_items=None,
+        expand_title=None,
+        expand_items_all=None,
+    ):
         """Shows a fuzzy search interface for finding items.
 
         If expand_items is given, pressing '/' once switches the search to that
         item set (e.g. searching across every list instead of just the current
-        one), keeping the query typed so far. Returns (expanded, original_idx).
+        one), keeping the query typed so far. expand_items is expected to exclude
+        completed tasks; if expand_items_all is also given, pressing 'f' while
+        expanded toggles between that pending-only set and the full set (including
+        completed tasks). Returns (expanded, original_idx, show_completed).
         """
         search_query = ""
         selected_idx = 0
         expanded = False
+        show_completed = False
 
         while True:
             h, w = getmaxyx(self.stdscr)
@@ -787,6 +798,8 @@ class UIManager:
             footer = "[Enter] select  [Esc] cancel"
             if expand_items is not None and not expanded:
                 footer += "  [/] search all"
+            if expanded and expand_items_all is not None:
+                footer += "  [f] show done" if not show_completed else "  [f] hide done"
             mvwaddstr(modal_win, modal_h - 2, 1, footer, A_DIM)
 
             wrefresh(modal_win)
@@ -800,15 +813,20 @@ class UIManager:
             elif key in [ord("\n"), ord("\r"), KEY_ENTER]:
                 delwin(modal_win)
                 if filtered_items:
-                    return (expanded, filtered_items[selected_idx][0])  # Return original index
-                return (expanded, None)
+                    # Return original index
+                    return (expanded, filtered_items[selected_idx][0], show_completed)
+                return (expanded, None, show_completed)
             elif key in [27, ord("q")]:  # Escape
                 delwin(modal_win)
-                return (expanded, None)
+                return (expanded, None, show_completed)
             elif key == ord("/") and expand_items is not None and not expanded:
                 items = expand_items
                 title = expand_title or title
                 expanded = True
+                selected_idx = 0
+            elif key == ord("f") and expanded and expand_items_all is not None:
+                show_completed = not show_completed
+                items = expand_items_all if show_completed else expand_items
                 selected_idx = 0
             elif key == KEY_BACKSPACE or key == 127:  # Backspace
                 search_query = search_query[:-1]
@@ -926,7 +944,7 @@ class UIManager:
             return fw
 
         def pick_due():
-            _, month_idx = self.show_fuzzy_search(MONTHS, title="Pick Month")
+            _, month_idx, _ = self.show_fuzzy_search(MONTHS, title="Pick Month")
             if month_idx is None:
                 return
             month_num = month_idx + 1
