@@ -1149,6 +1149,14 @@ class UIManager:
         # whole grid) instead of exaggerating sparse recent days.
         max_count = max((c for _, c in all_days), default=0)
 
+        # Factual counts to anchor the visual (the color ramp barely shifts
+        # at low counts, so a literal number answers "how many did I do?").
+        # No streak text per the issue's binding constraint — these are pure
+        # completed-work totals.
+        today_count = next((c for d, c in all_days if d == today), 0)
+        week_start = today - datetime.timedelta(days=6)
+        week_count = sum(c for d, c in all_days if d >= week_start)
+
         weekday_letters = ["M", "T", "W", "T", "F", "S", "S"]
         labels_y = 1
         for i, (d, _) in enumerate(days_view):
@@ -1167,6 +1175,24 @@ class UIManager:
             # from the same cell in the H modal (which doesn't invert).
             # The ▲ marker on the row above is the sole today indicator.
             mvwaddstr(win, cells_y, x, ch, attr)
+
+        # Pair the visual with a literal count on the empty right side of
+        # row 2. The today's count sits next to today's cell (rightmost),
+        # warm-highlighted to echo the streak glyph; "wk" stays dim.
+        seg_today_n = f"{today_count} "
+        seg_today_label = "today · "
+        seg_week = f"{week_count} wk"
+        stats_w = len(seg_today_n) + len(seg_today_label) + len(seg_week)
+        stats_x = max_x - stats_w - 2
+        # Only draw when there's clear space to the right of the cells;
+        # skip on narrow terminals rather than collide with the heatmap.
+        if stats_x > 1 + n_days + 2:
+            mvwaddstr(win, cells_y, stats_x, seg_today_n,
+                      color_pair(CP_STARRED) | A_BOLD)
+            mvwaddstr(win, cells_y, stats_x + len(seg_today_n),
+                      seg_today_label, A_DIM)
+            mvwaddstr(win, cells_y, stats_x + len(seg_today_n)
+                      + len(seg_today_label), seg_week, A_DIM)
 
         legend = "less ·░▒▓█ more"
         mvwaddstr(win, max_y - 1, 2, legend, A_DIM)
