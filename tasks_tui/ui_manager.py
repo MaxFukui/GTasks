@@ -1144,7 +1144,10 @@ class UIManager:
         n_days = max(7, min(30, max_x - 4))
         days_view = all_days[-n_days:]
         today_idx = len(days_view) - 1
-        max_count = max((c for _, c in days_view), default=0)
+        # Scale against the FULL year's max, not just the visible 30-day
+        # window, so today's intensity matches the H modal (which sees the
+        # whole grid) instead of exaggerating sparse recent days.
+        max_count = max((c for _, c in all_days), default=0)
 
         weekday_letters = ["M", "T", "W", "T", "F", "S", "S"]
         labels_y = 1
@@ -1269,7 +1272,9 @@ class UIManager:
         avail = max_x - 2 - label_w
         visible = max(1, min(len(grid), avail // cell_w))
         grid_view = grid[-visible:]
-        max_count = self._max_count(grid_view)
+        # Use the full grid's max (not the visible subset) so intensity is
+        # stable on resize and matches the persistent strip's scale.
+        max_count = self._max_count(grid)
 
         # Month labels (placed where a week's Sunday starts a new month).
         prev_month = None
