@@ -190,7 +190,7 @@ class UIManager:
         # terminals (h < 20) so the main panels stay usable regardless of
         # the user's "always show" preference; the preference is persisted
         # in local storage and toggled with `T`.
-        TRACKER_H = 3
+        TRACKER_H = 4
         TRACKER_MIN_H = 20
         tracker_h = TRACKER_H if (show_tracker and h >= TRACKER_MIN_H) else 0
         avail_h = h - tracker_h
@@ -1106,12 +1106,20 @@ class UIManager:
             refresh()
 
     def _draw_tracker_panel(self, win, snapshot):
-        """Compact always-on strip: streak glyph + single-row weekly heatmap.
+        """Compact always-on daily activity strip.
 
-        Renders the last (width-fitting) weeks from `snapshot` as one block
-        per week, intensity = weekly completion total. `snapshot` is
-        warmed off-thread by AppState.refresh_tracker_async(); while it is
-        None the strip shows a loading line. No numeric streak text.
+        Layout (4 rows tall):
+          row 0: top border with "<glyph> Activity" title
+          row 1: weekday initials above each cell; "▲" above today
+          row 2: one block per DAY (last ~30 days), intensity = daily count;
+                 today's cell is reverse-highlighted
+          row 3: bottom border with "less ·░▒▓█ more" legend (left)
+                 and "[H] full" hint (right)
+
+        `snapshot` is warmed synchronously by AppState.refresh_tracker()
+        from the already-synced local cache (zero API calls). While None
+        the strip shows a loading line. No numeric streak text — the glyph
+        color alone conveys recency (issue #1, STEP 3).
         """
         werase(win)
         max_y, max_x = getmaxyx(win)
@@ -1122,23 +1130,43 @@ class UIManager:
             return
 
         grid, days_since = snapshot
-        glyph, gattr = self._streak_glyph_attr(days_since)
-        self._draw_border(win, "Activity", 3)
-        mvwaddstr(win, 0, max_x - 4, glyph, gattr)
+        glyph, _ = self._streak_glyph_attr(days_since)
+        title = f"{glyph} Activity"
+        self._draw_border(win, title, 3)
 
-        if not grid:
+        today = datetime.date.today()
+        all_days = [(d, c) for week in grid for d, c in week if d <= today]
+        if not all_days:
             mvwaddstr(win, 1, 2, "no activity", A_DIM)
             return
 
-        weekly = [sum(c for _, c in week) for week in grid]
-        # Single-row strip: one block char per week (no inter-cell space)
-        # to maximise the visible window within the narrow strip.
-        inner = max_x - 2
-        weeks_view = weekly[-inner:]
-        max_w_view = max(weeks_view) if weeks_view else 0
-        for i, total in enumerate(weeks_view):
-            ch, attr = self._heat_cell(total, max_w_view)
-            mvwaddstr(win, 1, 1 + i, ch, attr)
+        # Scale the visible window down on narrow terminals; cap at 30 days.
+        n_days = max(7, min(30, max_x - 4))
+        days_view = all_days[-n_days:]
+        today_idx = len(days_view) - 1
+        max_count = max((c for _, c in days_view), default=0)
+
+        weekday_letters = ["M", "T", "W", "T", "F", "S", "S"]
+        labels_y = 1
+        for i, (d, _) in enumerate(days_view):
+            x = 1 + i
+            if i == today_idx:
+                mvwaddstr(win, labels_y, x, "▲", color_pair(CP_STARRED) | A_BOLD)
+            else:
+                mvwaddstr(win, labels_y, x, weekday_letters[d.weekday()], A_DIM)
+
+        cells_y = 2
+        for i, (_, count) in enumerate(days_view):
+            x = 1 + i
+            ch, attr = self._heat_cell(count, max_count)
+            if i == today_idx:
+                attr |= A_REVERSE
+            mvwaddstr(win, cells_y, x, ch, attr)
+
+        legend = "less ·░▒▓█ more"
+        mvwaddstr(win, max_y - 1, 2, legend, A_DIM)
+        hint = "[H] full"
+        mvwaddstr(win, max_y - 1, max_x - len(hint) - 2, hint, A_DIM)
 
     def show_heatmap(self, app_state):
         """Activity heatmap modal (issue #1, STEP 2 + STEP 3).
