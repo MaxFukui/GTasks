@@ -5,6 +5,7 @@
 from unicurses import *
 from .task_service import TaskService, is_starred, display_title
 from .ui_manager import UIManager
+from .history import HistoryService
 from . import local_storage
 import sys
 import threading
@@ -65,6 +66,7 @@ class AppState:
 
     def __init__(self, task_service):
         self.service = task_service
+        self.history = HistoryService(task_service.service)
 
         config = local_storage.load_config()
         self.active_list_id = (
@@ -775,6 +777,9 @@ def handle_input(stdscr, app_state, ui_manager):
                     "unknown",
                 )
                 ui_manager.show_temporary_message(f"Moved to '{target_list_title}'")
+
+    elif key == ord("H"):
+        ui_manager.show_heatmap(app_state.history)
 
     return True  # Keep the loop running
 

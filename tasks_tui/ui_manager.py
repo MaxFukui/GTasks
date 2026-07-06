@@ -17,6 +17,10 @@ from tasks_tui.task_service import is_starred, display_title
 
 CP_STARRED = 9  # Yellow — starred task indicator
 
+# Heatmap intensity blocks: 0=empty, 1..4 = increasing density. Single-cell
+# Unicode shade characters keep the grid low-saturation and terminal-portable.
+_HEAT_BLOCKS = ["·", "░", "▒", "▓", "█"]
+
 
 def display_width(text):
     """Returns the terminal column width of text, counting wide chars (emoji, CJK) as 2."""
@@ -247,6 +251,7 @@ class UIManager:
                 ("d", "Delete List"),
                 ("p", "Paste List"),
                 ("o", "New List"),
+                ("H", "Activity Heatmap"),
                 ("?", "Close Help"),
                 ("", ""),
                 ("Note:", "⭐ Favorites is always at top"),
@@ -269,6 +274,7 @@ class UIManager:
                 ("m", "Move Task"),
                 ("s", "Star/Unstar Task"),
                 ("*", "Toggle Starred View"),
+                ("H", "Activity Heatmap"),
                 ("?", "Close Help"),
             ]
 
@@ -1072,3 +1078,160 @@ class UIManager:
             h, w = getmaxyx(self.stdscr)
             mvwaddstr(self.stdscr, h - 2, 1, " " * (w - 2))  # Clear the line
             refresh()
+
+    def show_heatmap(self, history_service):
+        """Activity heatmap modal (issue #1, STEP 2 + STEP 3).
+
+        Renders a GitHub-style contribution grid computed fresh from the
+        HistoryService query layer, plus a single streak glyph whose color
+        decays from warm to ash-grey with days since last completion.
+
+        Keys: ``r`` = manual refresh (invalidates cache, re-hits API),
+        ``q`` / Esc = close. No numeric streak text, no celebratory copy.
+        """
+        h, w = getmaxyx(self.stdscr)
+        modal_h = min(h, 14)
+        modal_w = min(w, 120)
+        modal_y = max(0, (h - modal_h) // 2)
+        modal_x = max(0, (w - modal_w) // 2)
+
+        modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
+        keypad(modal_win, True)
+
+        grid, labels, start, end, days_since, err = self._fetch_heatmap_data(
+            history_service, modal_win
+        )
+
+        while True:
+            werase(modal_win)
+            self._draw_border(modal_win, "Activity Tracker", 3)
+            max_y, max_x = getmaxyx(modal_win)
+
+            if err:
+                mvwaddstr(modal_win, 1, 2, f"Error: {err}", A_BOLD)
+                mvwaddstr(modal_win, max_y - 2, 2, "[r] retry  [q] close", A_DIM)
+            else:
+                self._draw_heatmap_body(
+                    modal_win, grid, labels, start, end, days_since
+                )
+                mvwaddstr(
+                    modal_win, max_y - 2, 2, "[r] refresh  [q] close", A_DIM
+                )
+
+            wrefresh(modal_win)
+            key = wgetch(modal_win)
+
+            if key == ord("r"):
+                history_service.invalidate()
+                grid, labels, start, end, days_since, err = (
+                    self._fetch_heatmap_data(history_service, modal_win)
+                )
+            elif key in [27, ord("q")]:
+                break
+
+        delwin(modal_win)
+
+    def _fetch_heatmap_data(self, history_service, modal_win):
+        werase(modal_win)
+        self._draw_border(modal_win, "Activity Tracker", 3)
+        mvwaddstr(
+            modal_win,
+            6,
+            4,
+            "Fetching activity from Google Tasks...",
+            A_DIM,
+        )
+        wrefresh(modal_win)
+        try:
+            grid, labels, start, end = history_service.heatmap_grid(
+                weeks=53, use_cache=True
+            )
+            days_since = history_service.days_since_last_completion(
+                use_cache=True
+            )
+            return grid, labels, start, end, days_since, None
+        except Exception as e:
+            return [], [], None, None, None, str(e)
+
+    def _draw_heatmap_body(self, modal_win, grid, labels, start, end, days_since):
+        max_y, max_x = getmaxyx(modal_win)
+
+        # Streak glyph (STEP 3): single glyph, color decays with recency.
+        glyph, gattr = self._streak_glyph_attr(days_since)
+        glyph_label = f"{glyph} activity"
+        mvwaddstr(modal_win, 0, max_x - len(glyph_label) - 2, glyph_label, gattr)
+
+        if not grid:
+            mvwaddstr(modal_win, 1, 2, "No activity found.", A_DIM)
+            return
+
+        label_w = 4  # "Mon " width
+        cell_w = 2  # block + space
+        avail = max_x - 2 - label_w
+        visible = max(1, min(len(grid), avail // cell_w))
+        grid_view = grid[-visible:]
+        max_count = self._max_count(grid_view)
+
+        # Month labels (placed where a week's Sunday starts a new month).
+        prev_month = None
+        month_y = 1
+        for i, week in enumerate(grid_view):
+            sunday = week[0][0]
+            if sunday.month != prev_month:
+                m = sunday.strftime("%b")
+                x = 1 + label_w + i * cell_w
+                if x + len(m) < max_x - 1:
+                    mvwaddstr(modal_win, month_y, x, m, A_DIM)
+                prev_month = sunday.month
+
+        for row in range(7):
+            y = month_y + 1 + row
+            if y >= max_y - 1:
+                break
+            mvwaddstr(modal_win, y, 1, labels[row], A_DIM)
+            for i, week in enumerate(grid_view):
+                if row >= len(week):
+                    continue
+                _, count = week[row]
+                ch, attr = self._heat_cell(count, max_count)
+                x = 1 + label_w + i * cell_w
+                if x < max_x - 1:
+                    mvwaddstr(modal_win, y, x, ch, attr)
+
+        range_str = f"{start} -> {end}"
+        range_x = max_x - len(range_str) - 2
+        # Avoid colliding with the "[r] refresh  [q] close" hint drawn later
+        # on the same row by show_heatmap().
+        if range_x > len("[r] refresh  [q] close") + 4:
+            mvwaddstr(modal_win, max_y - 2, range_x, range_str, A_DIM)
+
+    def _heat_cell(self, count, max_count):
+        if count == 0 or max_count == 0:
+            return _HEAT_BLOCKS[0], A_DIM
+        level = max(1, min(4, round(count / max_count * 4)))
+        return _HEAT_BLOCKS[level], color_pair(2)  # green — low-saturation
+
+    def _max_count(self, grid_view):
+        mx = 0
+        for week in grid_view:
+            for _, c in week:
+                if c > mx:
+                    mx = c
+        return mx
+
+    def _streak_glyph_attr(self, days_since):
+        """Single streak glyph; color shifts warm -> ash-grey with recency.
+
+        No numeric streak text is shown — the glyph alone conveys how
+        recently the user completed real work (issue #1, STEP 3).
+        """
+        glyph = "●"
+        if days_since is None:
+            return glyph, A_DIM  # no activity at all — ash
+        if days_since <= 0:
+            return glyph, color_pair(CP_STARRED) | A_BOLD  # today — hottest
+        if days_since == 1:
+            return glyph, color_pair(CP_STARRED)  # warm
+        if days_since <= 3:
+            return glyph, color_pair(CP_STARRED) | A_DIM  # cooling
+        return glyph, A_DIM  # decaying — ash-grey
