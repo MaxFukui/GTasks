@@ -93,6 +93,11 @@ class AppState:
         self.tracker_snapshot = None
         if self.show_tracker:
             self.refresh_tracker()
+        # Per-session flag: the first H open of a session force-refreshes
+        # the heatmap from the API (catches completions made on other
+        # devices since the last sync); subsequent opens use the cache and
+        # the user manually refreshes with r if they want a fresh pull.
+        self._heatmap_opened = False
         self.preview_list_id = self.active_list_id  # Start with active list as preview
         self.show_help = False
         self.show_starred = False

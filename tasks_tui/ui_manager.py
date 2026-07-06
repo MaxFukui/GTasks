@@ -1162,8 +1162,10 @@ class UIManager:
         for i, (_, count) in enumerate(days_view):
             x = 1 + i
             ch, attr = self._heat_cell(count, max_count)
-            if i == today_idx:
-                attr |= A_REVERSE
+            # No reverse-highlight on today's cell: A_REVERSE brightens a
+            # green cell against the black background, so today diverged
+            # from the same cell in the H modal (which doesn't invert).
+            # The ▲ marker on the row above is the sole today indicator.
             mvwaddstr(win, cells_y, x, ch, attr)
 
         legend = "less ·░▒▓█ more"
@@ -1174,11 +1176,12 @@ class UIManager:
     def show_heatmap(self, app_state):
         """Activity heatmap modal (issue #1, STEP 2 + STEP 3).
 
-        Renders a GitHub-style contribution grid plus a single streak glyph
-        whose color decays from warm to ash-grey with days since last
-        completion. Opens instantly from the cache-derived snapshot; ``r``
-        forces a true API re-pagination (catches completions made on other
-        devices since last sync) and overwrites the snapshot. No numeric
+        Renders a GitHub-style contribution grid plus a single streak
+        glyph whose color decays from warm to ash-grey with days since
+        last completion. **The first H open of a session** force-refreshes
+        from the API (catches completions made on other devices since the
+        last sync); subsequent opens are instant from the cache, and the
+        user can force a fresh pull with ``r`` at any time. No numeric
         streak text, no celebratory copy.
         """
         h, w = getmaxyx(self.stdscr)
@@ -1192,11 +1195,23 @@ class UIManager:
 
         labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-        # Open instantly from the cache snapshot (zero API calls).
-        snapshot = app_state.tracker_snapshot
-        grid, days_since = (snapshot if snapshot is not None else ([], None))
-        start, end = (grid[0][0][0], grid[-1][-1][0]) if grid else (None, None)
-        err = None
+        # First open of a session: force a true API re-pagination so the
+        # heatmap reflects completions made on other devices since the last
+        # sync. After that, opens are instant from the cache and `r` is the
+        # explicit manual refresh.
+        if not app_state._heatmap_opened:
+            app_state._heatmap_opened = True
+            app_state.history.invalidate()
+            grid, labels, start, end, days_since, err = (
+                self._fetch_heatmap_data(app_state.history, modal_win)
+            )
+            if err is None:
+                app_state.tracker_snapshot = (grid, days_since)
+        else:
+            snapshot = app_state.tracker_snapshot
+            grid, days_since = (snapshot if snapshot is not None else ([], None))
+            start, end = (grid[0][0][0], grid[-1][-1][0]) if grid else (None, None)
+            err = None
 
         while True:
             werase(modal_win)
