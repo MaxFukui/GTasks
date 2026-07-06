@@ -174,6 +174,8 @@ class UIManager:
         show_starred=False,
         show_favorites=False,
         is_dirty=False,
+        show_tracker=False,
+        tracker_snapshot=None,
     ):
         h, w = getmaxyx(self.stdscr)
 
@@ -183,25 +185,42 @@ class UIManager:
         )  # Lists take up at least 25 chars or 1/4th of the screen
         task_width = w - list_width
 
+        # The persistent tracker strip occupies 3 rows at the very bottom
+        # (border + one content row). It is auto-suppressed on short
+        # terminals (h < 20) so the main panels stay usable regardless of
+        # the user's "always show" preference; the preference is persisted
+        # in local storage and toggled with `T`.
+        TRACKER_H = 3
+        TRACKER_MIN_H = 20
+        tracker_h = TRACKER_H if (show_tracker and h >= TRACKER_MIN_H) else 0
+        avail_h = h - tracker_h
+
         # Determine bottom panel: subtasks take priority, then notes
         bottom_panel_height = 0
         show_notes_panel = False
         if subtasks and len(subtasks) > 0:
-            bottom_panel_height = min(len(subtasks) + 2, h // 3)
+            bottom_panel_height = min(len(subtasks) + 2, avail_h // 3)
         elif selected_task and selected_task.get("notes"):
             note_lines = selected_task["notes"].splitlines()
-            bottom_panel_height = min(len(note_lines) + 3, h // 3)
+            bottom_panel_height = min(len(note_lines) + 3, avail_h // 3)
             show_notes_panel = True
 
         # 2. Create window objects
         # Lists Window (Left Panel)
-        list_win = newwin(h - bottom_panel_height, list_width, 0, 0)
+        list_win = newwin(avail_h - bottom_panel_height, list_width, 0, 0)
         # Tasks Window (Right Panel)
-        task_win = newwin(h - bottom_panel_height, task_width, 0, list_width)
+        task_win = newwin(
+            avail_h - bottom_panel_height, task_width, 0, list_width
+        )
         # Bottom Panel (subtasks or notes)
         bottom_win = None
         if bottom_panel_height > 0:
-            bottom_win = newwin(bottom_panel_height, w, h - bottom_panel_height, 0)
+            bottom_win = newwin(
+                bottom_panel_height, w, avail_h - bottom_panel_height, 0
+            )
+        tracker_win = None
+        if tracker_h > 0:
+            tracker_win = newwin(tracker_h, w, avail_h, 0)
 
         # 3. Draw content inside the windows
         self._draw_list_panel(list_win, lists, active_list_id, task_counts)
@@ -225,11 +244,16 @@ class UIManager:
             else:
                 self._draw_subtask_panel(bottom_win, subtasks, selected_task)
 
+        if tracker_win:
+            self._draw_tracker_panel(tracker_win, tracker_snapshot)
+
         # 4. Refresh all windows
         wrefresh(list_win)
         wrefresh(task_win)
         if bottom_win:
             wrefresh(bottom_win)
+        if tracker_win:
+            wrefresh(tracker_win)
 
         if self.show_help:
             self._draw_help_panel(self.active_panel)
@@ -252,6 +276,7 @@ class UIManager:
                 ("p", "Paste List"),
                 ("o", "New List"),
                 ("H", "Activity Heatmap"),
+                ("T", "Toggle Activity Strip"),
                 ("?", "Close Help"),
                 ("", ""),
                 ("Note:", "⭐ Favorites is always at top"),
@@ -275,6 +300,7 @@ class UIManager:
                 ("s", "Star/Unstar Task"),
                 ("*", "Toggle Starred View"),
                 ("H", "Activity Heatmap"),
+                ("T", "Toggle Activity Strip"),
                 ("?", "Close Help"),
             ]
 
@@ -1079,7 +1105,42 @@ class UIManager:
             mvwaddstr(self.stdscr, h - 2, 1, " " * (w - 2))  # Clear the line
             refresh()
 
-    def show_heatmap(self, history_service):
+    def _draw_tracker_panel(self, win, snapshot):
+        """Compact always-on strip: streak glyph + single-row weekly heatmap.
+
+        Renders the last (width-fitting) weeks from `snapshot` as one block
+        per week, intensity = weekly completion total. `snapshot` is
+        warmed off-thread by AppState.refresh_tracker_async(); while it is
+        None the strip shows a loading line. No numeric streak text.
+        """
+        werase(win)
+        max_y, max_x = getmaxyx(win)
+
+        if snapshot is None:
+            self._draw_border(win, "Activity", 3)
+            mvwaddstr(win, 1, 2, "loading…", A_DIM)
+            return
+
+        grid, days_since = snapshot
+        glyph, gattr = self._streak_glyph_attr(days_since)
+        self._draw_border(win, "Activity", 3)
+        mvwaddstr(win, 0, max_x - 4, glyph, gattr)
+
+        if not grid:
+            mvwaddstr(win, 1, 2, "no activity", A_DIM)
+            return
+
+        weekly = [sum(c for _, c in week) for week in grid]
+        # Single-row strip: one block char per week (no inter-cell space)
+        # to maximise the visible window within the narrow strip.
+        inner = max_x - 2
+        weeks_view = weekly[-inner:]
+        max_w_view = max(weeks_view) if weeks_view else 0
+        for i, total in enumerate(weeks_view):
+            ch, attr = self._heat_cell(total, max_w_view)
+            mvwaddstr(win, 1, 1 + i, ch, attr)
+
+    def show_heatmap(self, app_state):
         """Activity heatmap modal (issue #1, STEP 2 + STEP 3).
 
         Renders a GitHub-style contribution grid computed fresh from the
@@ -1098,9 +1159,12 @@ class UIManager:
         modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
         keypad(modal_win, True)
 
+        history = app_state.history
         grid, labels, start, end, days_since, err = self._fetch_heatmap_data(
-            history_service, modal_win
+            history, modal_win
         )
+        if err is None:
+            app_state.tracker_snapshot = (grid, days_since)
 
         while True:
             werase(modal_win)
@@ -1122,10 +1186,12 @@ class UIManager:
             key = wgetch(modal_win)
 
             if key == ord("r"):
-                history_service.invalidate()
+                history.invalidate()
                 grid, labels, start, end, days_since, err = (
-                    self._fetch_heatmap_data(history_service, modal_win)
+                    self._fetch_heatmap_data(history, modal_win)
                 )
+                if err is None:
+                    app_state.tracker_snapshot = (grid, days_since)
             elif key in [27, ord("q")]:
                 break
 

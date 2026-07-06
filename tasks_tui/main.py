@@ -89,6 +89,10 @@ class AppState:
         self.filtered_tasks_cache = {}  # Cache for filtered tasks
         self.task_counts = {}
         self.hide_completed = config.get("hide_completed", False)
+        self.show_tracker = config.get("show_tracker", True)
+        self.tracker_snapshot = None  # (grid, days_since) — warmed by background fetch
+        if self.show_tracker:
+            self.refresh_tracker_async()
         self.preview_list_id = self.active_list_id  # Start with active list as preview
         self.show_help = False
         self.show_starred = False
@@ -147,6 +151,7 @@ class AppState:
             "hide_completed": self.hide_completed,
             "active_list_id": self.active_list_id,
             "list_order": self.list_order,
+            "show_tracker": self.show_tracker,
         }
         local_storage.save_config(config)
 
@@ -172,6 +177,27 @@ class AppState:
 
     def _mark_sync_pending(self):
         self.auto_sync_pending = True
+
+    def refresh_tracker_async(self):
+        """Background-fetch tracker data (warms HistoryService cache + sets
+        tracker_snapshot) without blocking the main loop. The snapshot is a
+        read-only (grid, days_since) tuple; assignment is atomic under the
+        GIL so the draw loop reads it safely.
+        """
+        def _fetch():
+            try:
+                grid, _, _, _ = self.history.heatmap_grid(
+                    weeks=53, use_cache=True
+                )
+                days_since = self.history.days_since_last_completion(
+                    use_cache=True
+                )
+                self.tracker_snapshot = (grid, days_since)
+            except Exception:
+                self.tracker_snapshot = None
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
 
     def get_list_id_for_task(self, task):
         """Returns the correct list_id for a task, handling starred/favorites view."""
@@ -779,7 +805,15 @@ def handle_input(stdscr, app_state, ui_manager):
                 ui_manager.show_temporary_message(f"Moved to '{target_list_title}'")
 
     elif key == ord("H"):
-        ui_manager.show_heatmap(app_state.history)
+        ui_manager.show_heatmap(app_state)
+
+    elif key == ord("T"):
+        app_state.show_tracker = not app_state.show_tracker
+        app_state.save_config()
+        if app_state.show_tracker and app_state.tracker_snapshot is None:
+            app_state.refresh_tracker_async()
+        label = "Activity strip on" if app_state.show_tracker else "Activity strip off"
+        ui_manager.show_temporary_message(label)
 
     return True  # Keep the loop running
 
@@ -869,6 +903,8 @@ def main_loop(stdscr):
                 show_starred=app_state.show_starred,
                 show_favorites=app_state.active_list_id == FAVORITES_LIST_ID,
                 is_dirty=app_state.service.dirty,
+                show_tracker=app_state.show_tracker,
+                tracker_snapshot=app_state.tracker_snapshot,
             )
         except Exception as e:
             # Handles window resize errors gracefully
