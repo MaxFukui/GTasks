@@ -2,6 +2,7 @@ from googleapiclient.discovery import build
 from .auth import get_credentials
 from dateutil.parser import isoparse
 from . import local_storage
+import datetime
 
 STAR_MARKER = "⭐"
 
@@ -163,6 +164,18 @@ class TaskService:
         self.dirty = True
         return new_task
 
+    def _now_rfc3339_utc(self):
+        """UTC RFC3339 timestamp — matches the Google Tasks API's `completed`
+        field format. Set locally on toggle so the activity tracker (which
+        reads `completed` from the cache) reflects the change immediately
+        without waiting for a re-sync from the API.
+        """
+        return (
+            datetime.datetime.now(datetime.timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
+
     def toggle_task_status(self, list_id, task_id):
         """Toggles a task's status in the local cache, and cascades to subtasks if completing."""
         if not list_id:
@@ -180,6 +193,11 @@ class TaskService:
                     else "needsAction"
                 )
                 task["status"] = new_status
+                if new_status == "completed":
+                    task["completed"] = self._now_rfc3339_utc()
+                else:
+                    # Un-completing removes the timestamp, matching the API.
+                    task.pop("completed", None)
                 self.dirty = True
                 toggled_task = task
                 break
@@ -207,6 +225,7 @@ class TaskService:
             for task in tasks:
                 if task["id"] == child_id:
                     task["status"] = "completed"
+                    task["completed"] = self._now_rfc3339_utc()
                     self.dirty = True
                     self._cascade_complete(list_id, child_id)
                     break
@@ -223,6 +242,7 @@ class TaskService:
             for task in tasks:
                 if task["id"] == child_id:
                     task["status"] = "needsAction"
+                    task.pop("completed", None)
                     self.dirty = True
                     self._cascade_uncomplete(list_id, child_id)
                     break

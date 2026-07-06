@@ -13,6 +13,7 @@ import datetime
 import unittest
 
 from tasks_tui.history import HistoryService
+from tasks_tui.task_service import TaskService
 
 
 class _FakeReq:
@@ -315,6 +316,63 @@ class CacheDerivationTest(unittest.TestCase):
         )
         ids = [c.task_id for c in completions]
         self.assertEqual(ids, ["good"])
+
+
+class LocalToggleTest(unittest.TestCase):
+    """After c marks a task done in the local cache (no sync), the strip's
+    snapshot must reflect the new completion immediately — fixes the bug
+    where the strip only updated after a relaunch.
+    """
+
+    def _bare_task_service(self, lists, tasks_per_list):
+        ts = TaskService.__new__(TaskService)
+        ts.data = {"task_lists": lists, "tasks": tasks_per_list}
+        ts.dirty = False
+        return ts
+
+    def test_toggle_then_snapshot_sees_today(self):
+        today = datetime.datetime.now(datetime.timezone.utc)
+        ts = self._bare_task_service(
+            [{"id": "LX"}],
+            {"LX": [{"id": "t1", "title": "Do", "status": "needsAction"}]},
+        )
+        svc = _FakeService([{"id": "LX"}])
+        hs = HistoryService(svc, now=today)
+
+        # Before: nothing completed, snapshot sees no activity today.
+        grid, days_since = hs.snapshot_from_cache(ts.data, weeks=8)
+        today_date = today.date()
+        today_cell = next((c for week in grid for d, c in week if d == today_date), None)
+        self.assertEqual(today_cell, 0)
+        self.assertIsNone(days_since)
+
+        # Toggle locally (no sync, no API call).
+        ts.toggle_task_status("LX", "t1")
+
+        # After: snapshot MUST see today's completion immediately.
+        grid, days_since = hs.snapshot_from_cache(ts.data, weeks=8)
+        today_cell = next((c for week in grid for d, c in week if d == today_date), 0)
+        self.assertEqual(today_cell, 1)
+        self.assertEqual(days_since, 0)
+        self.assertEqual(len(svc.tasks_collection.calls), 0)
+
+    def test_toggle_back_removes_completion(self):
+        today = datetime.datetime.now(datetime.timezone.utc)
+        ts = self._bare_task_service(
+            [{"id": "LX"}],
+            {"LX": [{"id": "t1", "title": "Do", "status": "needsAction"}]},
+        )
+        svc = _FakeService([{"id": "LX"}])
+        hs = HistoryService(svc, now=today)
+
+        ts.toggle_task_status("LX", "t1")
+        ts.toggle_task_status("LX", "t1")
+
+        grid, days_since = hs.snapshot_from_cache(ts.data, weeks=8)
+        today_date = today.date()
+        today_cell = next((c for week in grid for d, c in week if d == today_date), 0)
+        self.assertEqual(today_cell, 0)
+        self.assertIsNone(days_since)
 
 
 if __name__ == "__main__":
