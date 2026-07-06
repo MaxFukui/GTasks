@@ -24,7 +24,15 @@ class TaskService:
 
     def __init__(self):
         self.creds = get_credentials()
-        self.service = build("tasks", "v1", credentials=self.creds)
+        # num_retries=5 makes googleapiclient retry transient transport errors
+        # (SSL DECRYPTION_FAILED_OR_BAD_RECORD_MAC, 502/503/504) with exponential
+        # backoff so a single flaky TLS handshake no longer crashes the app on
+        # launch or mid-sync. Combined with the tracker's cache-derived path
+        # (zero startup API calls), this kills both the "frozen" feeling and
+        # the SSL hard-crash.
+        self.service = build(
+            "tasks", "v1", credentials=self.creds, num_retries=5
+        )
         self.data = local_storage.load_data()
         self.dirty = False
         self.initial_sync_completed = False

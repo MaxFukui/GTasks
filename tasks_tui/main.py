@@ -90,9 +90,9 @@ class AppState:
         self.task_counts = {}
         self.hide_completed = config.get("hide_completed", False)
         self.show_tracker = config.get("show_tracker", True)
-        self.tracker_snapshot = None  # (grid, days_since) — warmed by background fetch
+        self.tracker_snapshot = None
         if self.show_tracker:
-            self.refresh_tracker_async()
+            self.refresh_tracker()
         self.preview_list_id = self.active_list_id  # Start with active list as preview
         self.show_help = False
         self.show_starred = False
@@ -178,26 +178,18 @@ class AppState:
     def _mark_sync_pending(self):
         self.auto_sync_pending = True
 
-    def refresh_tracker_async(self):
-        """Background-fetch tracker data (warms HistoryService cache + sets
-        tracker_snapshot) without blocking the main loop. The snapshot is a
-        read-only (grid, days_since) tuple; assignment is atomic under the
-        GIL so the draw loop reads it safely.
+    def refresh_tracker(self):
+        """Re-derive the tracker snapshot from the already-synced local cache
+        (self.service.data) with zero API calls. Instant. Called on startup
+        and after every refresh_data/sync so the strip stays live. The H
+        modal's r (force refresh) is the only path that hits the API.
         """
-        def _fetch():
-            try:
-                grid, _, _, _ = self.history.heatmap_grid(
-                    weeks=53, use_cache=True
-                )
-                days_since = self.history.days_since_last_completion(
-                    use_cache=True
-                )
-                self.tracker_snapshot = (grid, days_since)
-            except Exception:
-                self.tracker_snapshot = None
-
-        t = threading.Thread(target=_fetch, daemon=True)
-        t.start()
+        try:
+            self.tracker_snapshot = self.history.snapshot_from_cache(
+                self.service.data, weeks=53
+            )
+        except Exception:
+            self.tracker_snapshot = None
 
     def get_list_id_for_task(self, task):
         """Returns the correct list_id for a task, handling starred/favorites view."""
@@ -276,6 +268,8 @@ class AppState:
         self.filtered_tasks_cache.clear()  # Invalidate the cache
         self.tasks = self.get_tasks_for_active_list()
         self.calculate_task_counts()
+        if self.show_tracker:
+            self.refresh_tracker()
         if self.service.dirty:
             self.schedule_auto_sync()
 
@@ -811,7 +805,7 @@ def handle_input(stdscr, app_state, ui_manager):
         app_state.show_tracker = not app_state.show_tracker
         app_state.save_config()
         if app_state.show_tracker and app_state.tracker_snapshot is None:
-            app_state.refresh_tracker_async()
+            app_state.refresh_tracker()
         label = "Activity strip on" if app_state.show_tracker else "Activity strip off"
         ui_manager.show_temporary_message(label)
 

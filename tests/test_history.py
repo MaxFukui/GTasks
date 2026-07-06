@@ -246,5 +246,76 @@ class DerivationTest(unittest.TestCase):
         self.assertEqual(end, today.date())
 
 
+class CacheDerivationTest(unittest.TestCase):
+    def test_cache_path_makes_zero_api_calls(self):
+        today = datetime.datetime(2024, 6, 19, tzinfo=datetime.timezone.utc)
+        svc = _FakeService([{"id": "LX"}])
+        svc.tasks_collection.set_pages({("LX", None): _page([], None)})
+        hs = HistoryService(svc, now=today)
+        cache_data = {"task_lists": [{"id": "LX"}], "tasks": {"LX": []}}
+        calls_before = len(svc.tasks_collection.calls)
+        hs.snapshot_from_cache(cache_data, weeks=8)
+        calls_after = len(svc.tasks_collection.calls)
+        self.assertEqual(calls_after, calls_before)
+
+    def test_cache_path_matches_api_path_on_identical_data(self):
+        today = datetime.datetime(2024, 6, 19, tzinfo=datetime.timezone.utc)
+        # All completions land strictly before today's midnight so both the
+        # cache filter (start <= ts < end) and the fake API (which ignores
+        # completedMin/Max) return the same set on identical data.
+        last_day = today.date() - datetime.timedelta(days=1)
+        base = datetime.date(2024, 1, 1)
+        days = []
+        d = base
+        while d <= last_day:
+            days.append(d)
+            d += datetime.timedelta(days=1)
+        tasks = [_task(i, d) for i, d in enumerate(days)]
+
+        svc = _FakeService([{"id": "LX"}])
+        svc.tasks_collection.set_pages({("LX", None): _page(tasks, None)})
+        hs = HistoryService(svc, now=today)
+        cache_data = {
+            "task_lists": [{"id": "LX"}],
+            "tasks": {"LX": [
+                {"id": t["id"], "title": t["title"], "status": "completed",
+                 "completed": t["completed"]}
+                for t in tasks
+            ]},
+        }
+
+        grid_api, _, start_api, end_api = hs.heatmap_grid(weeks=53, use_cache=False)
+        counts_api = {d: c for week in grid_api for d, c in week}
+
+        grid_cache, days_since_cache = hs.snapshot_from_cache(cache_data, weeks=53)
+        counts_cache = {d: c for week in grid_cache for d, c in week}
+
+        self.assertEqual(counts_cache, counts_api)
+        last_completed = max(d for d, c in counts_cache.items() if c > 0)
+        self.assertEqual(days_since_cache, (today.date() - last_completed).days)
+
+    def test_cache_path_skips_deleted_and_incomplete(self):
+        today = datetime.datetime(2024, 6, 19, tzinfo=datetime.timezone.utc)
+        d = datetime.date(2024, 6, 15)
+        cache_data = {
+            "task_lists": [{"id": "LX"}],
+            "tasks": {"LX": [
+                {"id": "good", "title": "Done", "status": "completed",
+                 "completed": f"{d.isoformat()}T00:00:00.000Z"},
+                {"id": "del", "title": "Deleted", "status": "completed",
+                 "completed": f"{d.isoformat()}T00:00:00.000Z", "deleted": True},
+                {"id": "inc", "title": "Pending", "status": "needsAction",
+                 "completed": f"{d.isoformat()}T00:00:00.000Z"},
+            ]},
+        }
+        svc = _FakeService([{"id": "LX"}])
+        hs = HistoryService(svc, now=today)
+        completions = hs.completions_from_cache(
+            cache_data, datetime.date(2024, 1, 1), datetime.date(2024, 12, 31)
+        )
+        ids = [c.task_id for c in completions]
+        self.assertEqual(ids, ["good"])
+
+
 if __name__ == "__main__":
     unittest.main()

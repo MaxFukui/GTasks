@@ -88,6 +88,14 @@ def _parse_rfc3339(ts: str) -> datetime.datetime | None:
     return dt.astimezone(datetime.timezone.utc)
 
 
+def _counts_from(completions: list[Completion]) -> dict[datetime.date, int]:
+    counts: dict[datetime.date, int] = {}
+    for c in completions:
+        d = c.completed.date()
+        counts[d] = counts.get(d, 0) + 1
+    return counts
+
+
 class HistoryService:
     """Fetches completed-task history from the Google Tasks API with full
     pagination, and derives tracker data (daily counts, streaks).
@@ -150,11 +158,7 @@ class HistoryService:
         use_cache: bool = True,
     ) -> dict[datetime.date, int]:
         """Map each UTC date in [start, end] with >=1 completion -> count."""
-        counts: dict[datetime.date, int] = {}
-        for c in self.get_completions(start, end, use_cache=use_cache):
-            d = c.completed.date()  # UTC date — canonical across devices
-            counts[d] = counts.get(d, 0) + 1
-        return counts
+        return _counts_from(self.get_completions(start, end, use_cache=use_cache))
 
     def current_streak(self, use_cache: bool = True) -> int:
         """Consecutive days (ending today or yesterday, UTC) with >=1
@@ -223,6 +227,81 @@ class HistoryService:
         labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         return grid, labels, start, end
 
+    def completions_from_cache(
+        self,
+        task_service_data: dict,
+        start: datetime.date,
+        end: datetime.date,
+    ) -> list[Completion]:
+        """Derive completions from TaskService.data (already API-synced
+        local cache) with ZERO API calls. Same UTC-date canon and
+        Completion shape as the API path. The Google Tasks API is still
+        the source of truth — this just reads the in-memory copy the app
+        already syncs, so it is identical to re-paginating the API but
+        instant and quota-free.
+        """
+        start_ts = datetime.datetime.combine(
+            start, datetime.time.min, tzinfo=datetime.timezone.utc
+        )
+        end_ts = datetime.datetime.combine(
+            end + datetime.timedelta(days=1),
+            datetime.time.min,
+            tzinfo=datetime.timezone.utc,
+        )
+        out: list[Completion] = []
+        for list_id, tasks in task_service_data.get("tasks", {}).items():
+            for t in tasks:
+                if t.get("deleted") or t.get("status") != "completed":
+                    continue
+                completed_ts = _parse_rfc3339(t.get("completed", ""))
+                if completed_ts is None:
+                    continue
+                if start_ts <= completed_ts < end_ts:
+                    out.append(
+                        Completion(
+                            tasklist_id=list_id,
+                            task_id=t.get("id", ""),
+                            title=t.get("title", ""),
+                            completed=completed_ts,
+                        )
+                    )
+        return out
+
+    def snapshot_from_cache(
+        self, task_service_data: dict, weeks: int = 53
+    ) -> tuple[list[list[tuple[datetime.date, int]]], int | None]:
+        """Cache-derived (grid, days_since) for the persistent strip + the
+        default H render. Zero API calls. Mirrors what heatmap_grid +
+        days_since_last_completion would return from the API path on the
+        same data, so the strip is instant on startup.
+        """
+        today = self._now.date()
+        year_start = today - datetime.timedelta(days=365)
+        completions = self.completions_from_cache(
+            task_service_data, year_start, today
+        )
+        counts = _counts_from(completions)
+
+        days_since: int | None
+        if not counts:
+            days_since = None
+        else:
+            days_since = (today - max(counts)).days
+
+        days_since_sunday = (today.weekday() + 1) % 7
+        last_sunday = today - datetime.timedelta(days=days_since_sunday)
+        start_sunday = last_sunday - datetime.timedelta(weeks=weeks - 1)
+        grid: list[list[tuple[datetime.date, int]]] = []
+        col_sunday = start_sunday
+        while col_sunday <= today:
+            week = []
+            for d in range(7):
+                day = col_sunday + datetime.timedelta(days=d)
+                week.append((day, counts.get(day, 0)))
+            grid.append(week)
+            col_sunday += datetime.timedelta(days=7)
+        return grid, days_since
+
     # -------------------------------------------------------------- internals
 
     def _fetch_all_completions(
@@ -230,8 +309,10 @@ class HistoryService:
     ) -> list[Completion]:
         """Enumerate all tasklists, paginate completed tasks per list.
 
-        Uses tasks.list with showCompleted/showHidden/completedMin/
-        completedMax and follows nextPageToken until exhausted per list.
+        Used only by the explicit ``r`` force-refresh in the H modal (and
+        the tests). The default strip + H render go through
+        snapshot_from_cache instead to avoid startup API storms.
+
         ``completedMax`` is exclusive on the API, so we push it to the
         start of the day *after* ``end`` to include all of ``end``.
         """

@@ -1143,12 +1143,12 @@ class UIManager:
     def show_heatmap(self, app_state):
         """Activity heatmap modal (issue #1, STEP 2 + STEP 3).
 
-        Renders a GitHub-style contribution grid computed fresh from the
-        HistoryService query layer, plus a single streak glyph whose color
-        decays from warm to ash-grey with days since last completion.
-
-        Keys: ``r`` = manual refresh (invalidates cache, re-hits API),
-        ``q`` / Esc = close. No numeric streak text, no celebratory copy.
+        Renders a GitHub-style contribution grid plus a single streak glyph
+        whose color decays from warm to ash-grey with days since last
+        completion. Opens instantly from the cache-derived snapshot; ``r``
+        forces a true API re-pagination (catches completions made on other
+        devices since last sync) and overwrites the snapshot. No numeric
+        streak text, no celebratory copy.
         """
         h, w = getmaxyx(self.stdscr)
         modal_h = min(h, 14)
@@ -1159,12 +1159,13 @@ class UIManager:
         modal_win = newwin(modal_h, modal_w, modal_y, modal_x)
         keypad(modal_win, True)
 
-        history = app_state.history
-        grid, labels, start, end, days_since, err = self._fetch_heatmap_data(
-            history, modal_win
-        )
-        if err is None:
-            app_state.tracker_snapshot = (grid, days_since)
+        labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+        # Open instantly from the cache snapshot (zero API calls).
+        snapshot = app_state.tracker_snapshot
+        grid, days_since = (snapshot if snapshot is not None else ([], None))
+        start, end = (grid[0][0][0], grid[-1][-1][0]) if grid else (None, None)
+        err = None
 
         while True:
             werase(modal_win)
@@ -1174,6 +1175,9 @@ class UIManager:
             if err:
                 mvwaddstr(modal_win, 1, 2, f"Error: {err}", A_BOLD)
                 mvwaddstr(modal_win, max_y - 2, 2, "[r] retry  [q] close", A_DIM)
+            elif not grid:
+                mvwaddstr(modal_win, 1, 2, "No activity found.", A_DIM)
+                mvwaddstr(modal_win, max_y - 2, 2, "[r] refresh  [q] close", A_DIM)
             else:
                 self._draw_heatmap_body(
                     modal_win, grid, labels, start, end, days_since
@@ -1186,9 +1190,10 @@ class UIManager:
             key = wgetch(modal_win)
 
             if key == ord("r"):
-                history.invalidate()
+                # Force refresh: true API re-pagination, then update snapshot.
+                app_state.history.invalidate()
                 grid, labels, start, end, days_since, err = (
-                    self._fetch_heatmap_data(history, modal_win)
+                    self._fetch_heatmap_data(app_state.history, modal_win)
                 )
                 if err is None:
                     app_state.tracker_snapshot = (grid, days_since)
