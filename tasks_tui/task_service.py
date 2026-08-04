@@ -55,6 +55,7 @@ class TaskService:
             if tasks:
                 tasks.sort(key=lambda t: t.get("position", ""))
             self.data["tasks"][list_id] = tasks
+        self.data["last_sync"] = self._now_rfc3339_utc()
         self.save_local_data()
 
     def save_local_data(self):
@@ -601,4 +602,5 @@ class TaskService:
                 t for t in local_tasks_list if not t.get("deleted")
             ]
 
+        self.data["last_sync"] = self._now_rfc3339_utc()
         self.save_local_data()
