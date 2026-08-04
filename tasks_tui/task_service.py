@@ -2,20 +2,9 @@ from googleapiclient.discovery import build
 from .auth import get_credentials
 from dateutil.parser import isoparse
 from . import local_storage
+from . import queries
+from .queries import STAR_MARKER, is_starred, display_title  # re-exported for main.py
 import datetime
-
-STAR_MARKER = "⭐"
-
-
-def is_starred(task: dict) -> bool:
-    """Returns True if the task title starts with the star marker."""
-    return task.get("title", "").startswith(STAR_MARKER)
-
-
-def display_title(task: dict) -> str:
-    """Returns the task title with the star marker stripped."""
-    title = task.get("title", "")
-    return title[len(STAR_MARKER):] if title.startswith(STAR_MARKER) else title
 
 
 class TaskService:
@@ -75,52 +64,21 @@ class TaskService:
 
     def get_task_lists(self, list_order=None):
         """Fetches all available task lists from the local cache."""
-        lists = [
-            lst for lst in self.data.get("task_lists", []) if not lst.get("deleted")
-        ]
-
-        if list_order:
-
-            def sort_key(lst):
-                lst_id = lst.get("id", "")
-                if lst_id in list_order:
-                    return list_order.index(lst_id)
-                return len(list_order)  # Unknown lists go to the end
-
-            lists.sort(key=sort_key)
-
-        return lists
+        return queries.task_lists(self.data, list_order)
 
     def get_tasks_for_list(self, list_id=None):
         """Fetches all tasks for the specified list from the local cache."""
-        list_id = list_id or self.active_list_id
-        if not list_id:
-            return []
-        return [
-            task
-            for task in self.data["tasks"].get(list_id, [])
-            if not task.get("deleted") and not task.get("parent")
-        ]
+        return queries.tasks_for_list(self.data, list_id or self.active_list_id)
 
     def get_subtasks(self, list_id, parent_task_id):
         """Fetches all subtasks for the specified parent task from the local cache."""
-        if not list_id or not parent_task_id:
-            return []
-
-        subtasks = []
-        for task in self.data["tasks"].get(list_id, []):
-            if not task.get("deleted") and task.get("parent") == parent_task_id:
-                subtasks.append(task)
-        return subtasks
+        return queries.subtasks(self.data, list_id, parent_task_id)
 
     def get_all_tasks_for_list(self, list_id=None):
         """Fetches all non-deleted tasks (including subtasks) for the specified list."""
-        list_id = list_id or self.active_list_id
-        if not list_id:
-            return []
-        return [
-            task for task in self.data["tasks"].get(list_id, []) if not task.get("deleted")
-        ]
+        return queries.all_tasks_for_list(
+            self.data, list_id or self.active_list_id
+        )
 
     def add_task(self, list_id, title, parent=None):
         """Adds a new task to the specified list in the local cache."""
@@ -310,12 +268,7 @@ class TaskService:
 
     def get_starred_tasks(self):
         """Returns list of (list_id, task) for all non-deleted, non-child starred tasks."""
-        starred = []
-        for list_id, tasks in self.data["tasks"].items():
-            for task in tasks:
-                if not task.get("deleted") and not task.get("parent") and is_starred(task):
-                    starred.append((list_id, task))
-        return starred
+        return queries.starred_tasks(self.data)
 
     def rename_task(self, list_id, task_id, new_name):
         """Renames a task in the local cache."""
