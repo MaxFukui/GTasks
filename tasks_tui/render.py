@@ -102,9 +102,21 @@ def _render_pretty(rows, group_by_list, today=None):
 
 
 def _payload_rows(rows):
+    """Builds JSON task items from each row's raw Google fields.
+
+    Unlike the pretty/plain paths, JSON output carries the original task
+    dict (id, notes, _list_id, _list_title, ...) rather than the trimmed
+    row shape — `raw`, `depth`, and `list_title` never appear in it. `title`,
+    `starred`, and `due` are overridden with the row's derived values so a
+    JSON consumer never has to parse the star marker back out of the title.
+    Building a fresh dict per row means neither the caller's rows nor the
+    underlying cache are mutated.
+    """
     out = []
     for row in rows:
-        item = dict(row)
+        item = dict(row["raw"])
+        item["title"] = row["title"]
+        item["starred"] = row["starred"]
         item["due"] = row["due"].isoformat() if row["due"] else None
         out.append(item)
     return out

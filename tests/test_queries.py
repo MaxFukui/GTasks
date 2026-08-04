@@ -286,6 +286,25 @@ class TestToRow(unittest.TestCase):
         self.assertEqual(row["due"], datetime.date(2026, 8, 5))
         self.assertEqual(row["depth"], 1)
 
+    def test_carries_the_original_task_as_raw(self):
+        task = {
+            "id": "t1",
+            "title": "⭐Ship CLI",
+            "status": "needsAction",
+            "notes": "ship it",
+            "_list_id": "L1",
+        }
+        row = queries.to_row(task, "Work")
+        self.assertEqual(row["raw"], task)
+
+    def test_raw_does_not_change_the_six_existing_keys(self):
+        task = {"title": "⭐Ship CLI", "status": "needsAction"}
+        row = queries.to_row(task, "Work")
+        self.assertEqual(
+            set(row) - {"raw"},
+            {"title", "done", "due", "starred", "list_title", "depth"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

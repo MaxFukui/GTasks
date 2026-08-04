@@ -20,6 +20,15 @@ def _rows():
             "starred": True,
             "list_title": "Work",
             "depth": 0,
+            "raw": {
+                "id": "t1",
+                "title": "⭐Ship CLI",
+                "status": "needsAction",
+                "due": "2026-08-05T00:00:00.000Z",
+                "notes": "ship it",
+                "_list_id": "L1",
+                "_list_title": "Work",
+            },
         },
         {
             "title": "Review PR",
@@ -28,6 +37,13 @@ def _rows():
             "starred": False,
             "list_title": "Work",
             "depth": 0,
+            "raw": {
+                "id": "t2",
+                "title": "Review PR",
+                "status": "completed",
+                "_list_id": "L1",
+                "_list_title": "Work",
+            },
         },
         {
             "title": "Buy milk",
@@ -36,6 +52,13 @@ def _rows():
             "starred": True,
             "list_title": "Home",
             "depth": 0,
+            "raw": {
+                "id": "t3",
+                "title": "⭐Buy milk",
+                "status": "needsAction",
+                "_list_id": "L2",
+                "_list_title": "Home",
+            },
         },
     ]
 
@@ -165,6 +188,38 @@ class TestJson(unittest.TestCase):
         )
         self.assertTrue(payload["tasks"][0]["starred"])
         self.assertNotIn("⭐", payload["tasks"][0]["title"])
+
+    def test_raw_google_fields_survive_into_the_payload(self):
+        payload = json.loads(
+            render.render(_rows(), render.JSON, group_by_list=True)
+        )
+        task = payload["tasks"][0]
+        self.assertEqual(task["id"], "t1")
+        self.assertEqual(task["notes"], "ship it")
+
+    def test_list_id_and_list_title_survive_into_the_payload(self):
+        payload = json.loads(
+            render.render(_rows(), render.JSON, group_by_list=True)
+        )
+        task = payload["tasks"][0]
+        self.assertEqual(task["_list_id"], "L1")
+        self.assertEqual(task["_list_title"], "Work")
+
+    def test_raw_depth_and_list_title_are_not_in_the_json_item(self):
+        payload = json.loads(
+            render.render(_rows(), render.JSON, group_by_list=True)
+        )
+        task = payload["tasks"][0]
+        self.assertNotIn("raw", task)
+        self.assertNotIn("depth", task)
+        self.assertNotIn("list_title", task)
+
+    def test_does_not_mutate_the_input_rows(self):
+        rows = _rows()
+        original_raw = dict(rows[0]["raw"])
+        render.render(rows, render.JSON, group_by_list=True)
+        self.assertEqual(rows[0]["raw"], original_raw)
+        self.assertEqual(rows[0]["raw"]["title"], "⭐Ship CLI")
 
 
 class TestRenderLists(unittest.TestCase):

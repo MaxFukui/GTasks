@@ -216,6 +216,10 @@ def to_row(task, list_title, depth=0):
 
     The star marker is stripped out of the title and surfaced as a boolean,
     so neither the renderer nor a JSON consumer has to parse it back out.
+
+    `raw` carries the original task dict through untouched, so the JSON
+    renderer can emit the raw Google fields (id, notes, _list_id, ...)
+    without the pretty/plain renderers ever seeing it.
     """
     return {
         "title": display_title(task),
@@ -224,4 +228,5 @@ def to_row(task, list_title, depth=0):
         "starred": is_starred(task),
         "list_title": list_title,
         "depth": depth,
+        "raw": task,
     }
