@@ -92,10 +92,14 @@ def _load_cache(stderr):
         return None, path
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh), path
+            data = json.load(fh)
     except (json.JSONDecodeError, OSError) as exc:
         print(f"cannot read {path}: {exc}", file=stderr)
         return None, path
+    if not isinstance(data, dict):
+        print(f"cannot read {path}: not a JSON object", file=stderr)
+        return None, path
+    return data, path
 
 
 def _scope(data, args):

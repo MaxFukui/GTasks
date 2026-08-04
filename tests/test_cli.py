@@ -197,6 +197,29 @@ class TestMissingCache(unittest.TestCase):
             os.environ.pop("GTASK_CACHE_FILE", None)
 
 
+class TestMalformedCache(unittest.TestCase):
+    """A cache file that parses as JSON but is not an object (M-traceback)."""
+
+    def setUp(self):
+        fd, self.cache_path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w") as fh:
+            json.dump([], fh)  # valid JSON, not a dict
+        os.environ["GTASK_CACHE_FILE"] = self.cache_path
+
+    def tearDown(self):
+        os.environ.pop("GTASK_CACHE_FILE", None)
+        if os.path.exists(self.cache_path):
+            os.remove(self.cache_path)
+
+    def test_non_dict_cache_exits_1_with_message_not_a_traceback(self):
+        out, err = io.StringIO(), io.StringIO()
+        code = cli.run(["fav"], stdout=out, stderr=err)
+        self.assertEqual(code, 1)
+        self.assertIn(self.cache_path, err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+        self.assertEqual(out.getvalue(), "")
+
+
 class TestJsonPayload(_CliCase):
     """--json must carry raw Google fields, not just the six row keys (I1)."""
 
