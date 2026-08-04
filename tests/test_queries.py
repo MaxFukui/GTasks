@@ -6,6 +6,8 @@ credentials, or the filesystem.
 """
 
 import datetime
+import os
+import time
 import unittest
 
 from tasks_tui import queries
@@ -168,9 +170,27 @@ class TestResolveListName(unittest.TestCase):
 class TestDueDate(unittest.TestCase):
     def test_reads_utc_date_component_without_conversion(self):
         # Google pins `due` to midnight UTC on the intended day. Converting
-        # to a timezone west of UTC would report the previous day.
+        # to local time would shift the date depending on the host's zone —
+        # west of UTC loses a day, east of UTC doesn't. Pin both extremes so
+        # this test fails on a stray `.astimezone()` regardless of the
+        # machine it runs on, rather than only on machines west of UTC.
+        original_tz = os.environ.get("TZ")
+
+        def restore_tz():
+            if original_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = original_tz
+            time.tzset()
+
+        self.addCleanup(restore_tz)
+
         task = {"due": "2026-08-05T00:00:00.000Z"}
-        self.assertEqual(queries.due_date(task), datetime.date(2026, 8, 5))
+        for zone in ("Pacific/Kiritimati", "Pacific/Niue"):  # UTC+14, UTC-11
+            with self.subTest(zone=zone):
+                os.environ["TZ"] = zone
+                time.tzset()
+                self.assertEqual(queries.due_date(task), datetime.date(2026, 8, 5))
 
     def test_returns_none_when_no_due_field(self):
         self.assertIsNone(queries.due_date({"title": "x"}))
