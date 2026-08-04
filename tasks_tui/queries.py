@@ -96,3 +96,52 @@ def starred_tasks(data):
 def without_completed(tasks):
     """Drops completed tasks. Used by the CLI, which hides them by default."""
     return [task for task in tasks if task.get("status") != "completed"]
+
+
+class ListResolutionError(Exception):
+    """A list name matched zero lists, or more than one.
+
+    `candidates` holds the titles that matched, so the caller can show the
+    user what to disambiguate between. It is empty when nothing matched.
+    """
+
+    def __init__(self, message, candidates=None):
+        super().__init__(message)
+        self.message = message
+        self.candidates = candidates or []
+
+
+def resolve_list_name(data, name):
+    """Resolves a user-typed list name to exactly one task-list dict.
+
+    Three tiers, first hit wins: case-insensitive exact, then unique
+    case-insensitive prefix, then unique case-insensitive substring. An
+    ambiguous or absent name raises ListResolutionError rather than guessing.
+    """
+    lists = task_lists(data)
+    needle = name.casefold()
+
+    exact = [lst for lst in lists if lst.get("title", "").casefold() == needle]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise ListResolutionError(
+            f"'{name}' matches {len(exact)} lists",
+            [lst.get("title", "") for lst in exact],
+        )
+
+    for matcher in (str.startswith, str.__contains__):
+        hits = [
+            lst
+            for lst in lists
+            if matcher(lst.get("title", "").casefold(), needle)
+        ]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            raise ListResolutionError(
+                f"'{name}' matches {len(hits)} lists",
+                [lst.get("title", "") for lst in hits],
+            )
+
+    raise ListResolutionError(f"no list matches '{name}'")

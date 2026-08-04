@@ -119,5 +119,50 @@ class TestWithoutCompleted(unittest.TestCase):
         self.assertEqual(ids, ["t1"])
 
 
+class TestResolveListName(unittest.TestCase):
+    def _data(self):
+        return {
+            "task_lists": [
+                {"id": "L1", "title": "Work"},
+                {"id": "L2", "title": "Workout"},
+                {"id": "L3", "title": "Home"},
+            ],
+            "tasks": {},
+        }
+
+    def test_exact_match_wins_over_prefix(self):
+        # "Work" is also a prefix of "Workout"; exact must win.
+        found = queries.resolve_list_name(self._data(), "Work")
+        self.assertEqual(found["id"], "L1")
+
+    def test_exact_match_is_case_insensitive(self):
+        found = queries.resolve_list_name(self._data(), "wORK")
+        self.assertEqual(found["id"], "L1")
+
+    def test_unique_prefix_match(self):
+        found = queries.resolve_list_name(self._data(), "ho")
+        self.assertEqual(found["id"], "L3")
+
+    def test_unique_substring_match(self):
+        found = queries.resolve_list_name(self._data(), "ome")
+        self.assertEqual(found["id"], "L3")
+
+    def test_ambiguous_prefix_raises_with_candidates(self):
+        with self.assertRaises(queries.ListResolutionError) as ctx:
+            queries.resolve_list_name(self._data(), "wo")
+        self.assertEqual(ctx.exception.candidates, ["Work", "Workout"])
+
+    def test_no_match_raises_with_no_candidates(self):
+        with self.assertRaises(queries.ListResolutionError) as ctx:
+            queries.resolve_list_name(self._data(), "zzz")
+        self.assertEqual(ctx.exception.candidates, [])
+
+    def test_deleted_lists_are_not_resolvable(self):
+        data = self._data()
+        data["task_lists"].append({"id": "L4", "title": "Archive", "deleted": True})
+        with self.assertRaises(queries.ListResolutionError):
+            queries.resolve_list_name(data, "Archive")
+
+
 if __name__ == "__main__":
     unittest.main()
