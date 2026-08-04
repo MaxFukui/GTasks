@@ -16,8 +16,6 @@ from . import local_storage
 from . import queries
 from . import render
 
-VERBS = ("fav", "lists", "list", "today", "overdue", "search", "sync")
-
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2

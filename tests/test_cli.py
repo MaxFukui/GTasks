@@ -119,6 +119,14 @@ class TestListVerb(_CliCase):
         self.assertIn("no list matches", err)
 
 
+class TestUnknownVerb(_CliCase):
+    def test_typo_exits_2_instead_of_falling_through_to_the_tui(self):
+        # argparse writes its "invalid choice" error to the real sys.stderr,
+        # not the injected stream, so only the return code is asserted here.
+        code, _, _ = self.run_cli(["favs"])
+        self.assertEqual(code, 2)
+
+
 class TestDateVerbs(_CliCase):
     def test_today_shows_only_tasks_due_today(self):
         code, out, _ = self.run_cli(["today"])
