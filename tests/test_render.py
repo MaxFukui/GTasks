@@ -108,6 +108,36 @@ class TestPretty(unittest.TestCase):
         out = render.render(rows, render.PRETTY, group_by_list=False)
         self.assertTrue(out.startswith("    "))
 
+    def test_overdue_and_not_done_renders_red(self):
+        rows = [_rows()[0]]  # due 2026-08-05, not done
+        out = render.render(
+            rows,
+            render.PRETTY,
+            group_by_list=False,
+            today=datetime.date(2026, 8, 6),
+        )
+        self.assertIn("\x1b[31m", out)
+
+    def test_not_yet_due_does_not_render_red(self):
+        rows = [_rows()[0]]  # due 2026-08-05, not done
+        out = render.render(
+            rows,
+            render.PRETTY,
+            group_by_list=False,
+            today=datetime.date(2026, 8, 1),
+        )
+        self.assertNotIn("\x1b[31m", out)
+
+    def test_done_and_overdue_does_not_render_red(self):
+        rows = [dict(_rows()[0], done=True)]  # due 2026-08-05, but done
+        out = render.render(
+            rows,
+            render.PRETTY,
+            group_by_list=False,
+            today=datetime.date(2026, 8, 6),
+        )
+        self.assertNotIn("\x1b[31m", out)
+
 
 class TestJson(unittest.TestCase):
     def test_payload_carries_tasks_and_sync_info(self):

@@ -6,6 +6,10 @@ json    — a script is reading: a single object with tasks and cache metadata
 
 Colours are raw ANSI escapes on purpose. `unicurses` must never be imported
 on the CLI path, since importing it initializes terminal state.
+
+`render()` accepts an optional `today` to pin the overdue-red comparison in
+pretty mode; when the caller does not pass one, it defaults to the system
+date (`datetime.date.today()`).
 """
 
 import datetime
@@ -112,13 +116,17 @@ def _render_json(rows, sync_info):
     return json.dumps(payload, ensure_ascii=False)
 
 
-def render(rows, mode, group_by_list, sync_info=None):
-    """Renders task rows. Returns a string with no trailing newline."""
+def render(rows, mode, group_by_list, sync_info=None, today=None):
+    """Renders task rows. Returns a string with no trailing newline.
+
+    `today` pins the overdue-red comparison in pretty mode; it defaults to
+    the system date when not given.
+    """
     if mode == JSON:
         return _render_json(rows, sync_info)
     if mode == PLAIN:
         return _render_plain(rows, group_by_list)
-    return _render_pretty(rows, group_by_list)
+    return _render_pretty(rows, group_by_list, today=today)
 
 
 def render_lists(entries, mode, sync_info=None):
