@@ -11,6 +11,12 @@ STORAGE_FILE = os.path.join(GTASK_DIR, "local_tasks.json")
 CONFIG_FILE = os.path.join(GTASK_DIR, "config.json")
 
 
+def cache_path():
+    """Path to the task cache. GTASK_CACHE_FILE overrides it, which is how
+    tests point the CLI at a fixture without touching the real ~/.gtask."""
+    return os.environ.get("GTASK_CACHE_FILE", STORAGE_FILE)
+
+
 def _ensure_dir_exists():
     """Ensures that the .gtask directory exists."""
     if not os.path.exists(GTASK_DIR):
