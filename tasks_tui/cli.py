@@ -119,6 +119,31 @@ def _rows(tasks, include_completed):
     ]
 
 
+def _list_rows(data, list_id, title, include_completed):
+    """Rows for the `list <name>` verb: each parent immediately followed by
+    its own children, indented one level (Google Tasks nests only one level
+    deep, so depth never exceeds 1).
+
+    Completed-task filtering is applied per task, not inherited: a parent
+    that survives keeps only the children that individually survive, and a
+    parent that gets filtered out takes its children with it even if a
+    child would otherwise survive on its own — printing that child would
+    orphan it under a heading that isn't there.
+    """
+    rows = []
+    for parent in queries.tasks_for_list(data, list_id):
+        if not include_completed and parent.get("status") == "completed":
+            continue
+        tagged_parent = dict(parent, _list_id=list_id, _list_title=title)
+        rows.append(queries.to_row(tagged_parent, title, depth=0))
+        for child in queries.subtasks(data, list_id, parent.get("id")):
+            if not include_completed and child.get("status") == "completed":
+                continue
+            tagged_child = dict(child, _list_id=list_id, _list_title=title)
+            rows.append(queries.to_row(tagged_child, title, depth=1))
+    return rows
+
+
 def _emit(text, footer, args, mode, stdout, stderr):
     if text:
         print(text, file=stdout)
@@ -200,10 +225,7 @@ def run(argv, stdout=None, stderr=None):
         if args.verb == "list":
             target = queries.resolve_list_name(data, args.name)
             title = target.get("title", "Untitled")
-            tasks = [
-                dict(task, _list_title=title)
-                for task in queries.all_tasks_for_list(data, target["id"])
-            ]
+            rows = _list_rows(data, target["id"], title, include_completed=args.all)
             group = False
         else:
             tasks = _scope(data, args)
@@ -224,9 +246,10 @@ def run(argv, stdout=None, stderr=None):
     elif args.verb == "search":
         tasks = queries.search(tasks, args.query)
 
-    rows = _rows(tasks, include_completed=args.all)
-    if group:
-        rows.sort(key=lambda row: row["list_title"])
+    if args.verb != "list":
+        rows = _rows(tasks, include_completed=args.all)
+        if group:
+            rows.sort(key=lambda row: row["list_title"])
 
     text = render.render(rows, mode, group_by_list=group, sync_info=info)
     return _emit(text, freshness.format_age(info), args, mode, stdout, stderr)

@@ -14,6 +14,18 @@ import unittest
 from tasks_tui import cli
 
 
+class _TTYStringIO(io.StringIO):
+    """A stdout stand-in that reports itself as a terminal.
+
+    Needed to exercise pretty-mode rendering (indentation, colour), since a
+    plain io.StringIO().isatty() is always False and pick_mode() would
+    downgrade to plain.
+    """
+
+    def isatty(self):
+        return True
+
+
 def _cache_dict():
     today = datetime.date.today().isoformat()
     yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
@@ -183,6 +195,149 @@ class TestMissingCache(unittest.TestCase):
             self.assertIn("no local cache", err.getvalue())
         finally:
             os.environ.pop("GTASK_CACHE_FILE", None)
+
+
+class TestJsonPayload(_CliCase):
+    """--json must carry raw Google fields, not just the six row keys (I1)."""
+
+    def test_fav_payload_carries_id_and_notes(self):
+        _, out, _ = self.run_cli(["fav", "--json"])
+        payload = json.loads(out)
+        by_title = {t["title"]: t for t in payload["tasks"]}
+        self.assertEqual(by_title["Ship CLI"]["id"], "t1")
+        self.assertEqual(by_title["Buy milk"]["notes"], "semi-skimmed")
+
+    def test_fav_payload_title_has_no_star_marker_but_starred_is_true(self):
+        _, out, _ = self.run_cli(["fav", "--json"])
+        payload = json.loads(out)
+        by_title = {t["title"]: t for t in payload["tasks"]}
+        self.assertNotIn("⭐", by_title["Ship CLI"]["title"])
+        self.assertTrue(by_title["Ship CLI"]["starred"])
+
+    def test_fav_payload_due_is_iso_string_or_null(self):
+        _, out, _ = self.run_cli(["fav", "--json"])
+        payload = json.loads(out)
+        by_title = {t["title"]: t for t in payload["tasks"]}
+        self.assertEqual(
+            by_title["Ship CLI"]["due"], datetime.date.today().isoformat()
+        )
+        self.assertIsNone(by_title["Buy milk"]["due"])
+
+    def test_fav_payload_carries_list_id_and_list_title(self):
+        _, out, _ = self.run_cli(["fav", "--json"])
+        payload = json.loads(out)
+        for task in payload["tasks"]:
+            self.assertIn("_list_id", task)
+            self.assertIn("_list_title", task)
+
+    def test_fav_payload_omits_raw_depth_and_list_title_keys(self):
+        _, out, _ = self.run_cli(["fav", "--json"])
+        payload = json.loads(out)
+        for task in payload["tasks"]:
+            self.assertNotIn("raw", task)
+            self.assertNotIn("depth", task)
+            self.assertNotIn("list_title", task)
+
+    def test_list_verb_payload_also_carries_list_id_and_title(self):
+        _, out, _ = self.run_cli(["list", "Work", "--json"])
+        payload = json.loads(out)
+        self.assertTrue(payload["tasks"])
+        for task in payload["tasks"]:
+            self.assertEqual(task["_list_id"], "L1")
+            self.assertEqual(task["_list_title"], "Work")
+
+
+class TestListVerbSubtasks(unittest.TestCase):
+    """`list <name>` must render subtasks indented under their parent, in
+    parent-then-children order, not raw cache order (I2)."""
+
+    def _cache(self):
+        return {
+            "last_sync": datetime.datetime.now(datetime.timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {
+                "L1": [
+                    # Raw cache order deliberately interleaves an unrelated
+                    # top-level task between a parent and its child, matching
+                    # the bug reproduction in the review: a naive flat render
+                    # would print Parent A, Zebra top, Child of A in that
+                    # order with no indentation.
+                    {"id": "p1", "title": "Parent A", "status": "needsAction"},
+                    {"id": "z1", "title": "Zebra top", "status": "needsAction"},
+                    {"id": "c1", "title": "Child of A", "status": "needsAction",
+                     "parent": "p1"},
+                    # A completed parent: its uncompleted child must not be
+                    # orphaned under a heading that got filtered out.
+                    {"id": "p2", "title": "Parent B", "status": "completed"},
+                    {"id": "c2", "title": "Child of B", "status": "needsAction",
+                     "parent": "p2"},
+                    # An uncompleted parent with a completed child: the child
+                    # is filtered on its own merits, independent of the
+                    # parent surviving.
+                    {"id": "p3", "title": "Parent C", "status": "needsAction"},
+                    {"id": "c3", "title": "Child of C done",
+                     "status": "completed", "parent": "p3"},
+                ],
+            },
+        }
+
+    def setUp(self):
+        fd, self.cache_path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w") as fh:
+            json.dump(self._cache(), fh)
+        os.environ["GTASK_CACHE_FILE"] = self.cache_path
+        os.environ.pop("NO_COLOR", None)
+
+    def tearDown(self):
+        os.environ.pop("GTASK_CACHE_FILE", None)
+        os.environ.pop("NO_COLOR", None)
+        if os.path.exists(self.cache_path):
+            os.remove(self.cache_path)
+
+    def run_cli(self, argv):
+        out, err = _TTYStringIO(), io.StringIO()
+        code = cli.run(argv, stdout=out, stderr=err)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_child_follows_parent_immediately_and_is_indented(self):
+        _, out, _ = self.run_cli(["list", "Work", "-a"])
+        lines = out.splitlines()
+        parent_idx = next(i for i, ln in enumerate(lines) if "Parent A" in ln)
+        child_idx = next(i for i, ln in enumerate(lines) if "Child of A" in ln)
+        self.assertEqual(child_idx, parent_idx + 1)
+        self.assertTrue(lines[child_idx].startswith("    "))
+        self.assertFalse(lines[parent_idx].startswith("    "))
+
+    def test_order_is_parent_then_child_not_raw_cache_order(self):
+        _, out, _ = self.run_cli(["list", "Work", "-a"])
+        titles = [
+            next(t for t in ("Parent A", "Zebra top", "Child of A") if t in ln)
+            for ln in out.splitlines()
+            if any(t in ln for t in ("Parent A", "Zebra top", "Child of A"))
+        ]
+        self.assertEqual(titles, ["Parent A", "Child of A", "Zebra top"])
+
+    def test_completed_parent_hides_its_uncompleted_child_by_default(self):
+        _, out, _ = self.run_cli(["list", "Work"])
+        self.assertNotIn("Parent B", out)
+        self.assertNotIn("Child of B", out)
+
+    def test_dash_a_shows_completed_parent_and_its_child(self):
+        _, out, _ = self.run_cli(["list", "Work", "-a"])
+        self.assertIn("Parent B", out)
+        self.assertIn("Child of B", out)
+
+    def test_completed_child_is_hidden_even_though_its_parent_survives(self):
+        _, out, _ = self.run_cli(["list", "Work"])
+        self.assertIn("Parent C", out)
+        self.assertNotIn("Child of C done", out)
+
+    def test_dash_a_shows_the_completed_child_too(self):
+        _, out, _ = self.run_cli(["list", "Work", "-a"])
+        self.assertIn("Parent C", out)
+        self.assertIn("Child of C done", out)
 
 
 if __name__ == "__main__":
