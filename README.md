@@ -55,6 +55,39 @@ To run the application, use the following command:
 tasks-tui
 ```
 
+### Command line queries
+
+The same command answers quick questions without opening the TUI. These read
+the local cache only — no network, no sign-in, roughly 30ms.
+
+```bash
+tasks-tui fav              # starred tasks, all lists
+tasks-tui lists            # every list with undone/total counts
+tasks-tui list Work        # tasks in one list (partial names work)
+tasks-tui today            # due today
+tasks-tui overdue          # past due, not done
+tasks-tui search milk      # match title or notes
+tasks-tui sync             # pull fresh data from Google
+```
+
+Flags: `-a` include completed tasks, `-l NAME` restrict to one list,
+`--json` machine-readable output, `-q` hide the staleness footer.
+
+Completed tasks are hidden by default, independent of the TUI's
+`hide_completed` setting. Output drops colour automatically when piped, and
+respects `NO_COLOR`.
+
+Every query prints how old the cache is on stderr, so pipes stay clean:
+
+```
+$ tasks-tui fav | grep Ship
+synced 3h ago
+  ○ Ship CLI mode        due 2026-08-05
+```
+
+Run `tasks-tui sync` to refresh. Note that the age is approximate until the
+first sync after upgrading.
+
 ### Keyboard Shortcuts
 
 | Key          | Action                                  |
