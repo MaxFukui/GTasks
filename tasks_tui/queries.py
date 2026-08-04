@@ -8,6 +8,8 @@ TaskService delegates its read methods here, so these functions are the single
 definition of what "the tasks in a list" means for both the TUI and the CLI.
 """
 
+from dateutil.parser import isoparse
+
 STAR_MARKER = "⭐"
 
 
@@ -145,3 +147,81 @@ def resolve_list_name(data, name):
             )
 
     raise ListResolutionError(f"no list matches '{name}'")
+
+
+def due_date(task):
+    """The calendar day a task is due, or None.
+
+    Google stores `due` as midnight UTC on the intended day, so the intended
+    day is the UTC date component. Converting to local time first would shift
+    the day for any timezone west of UTC, filing tasks under the wrong date.
+    """
+    raw = task.get("due")
+    if not raw:
+        return None
+    try:
+        return isoparse(raw).date()
+    except (ValueError, OverflowError, TypeError):
+        return None
+
+
+def all_tasks_global(data, list_order=None):
+    """Every non-deleted task across every list, subtasks included.
+
+    Returns copies tagged with `_list_id` and `_list_title` so callers can
+    show which list a task came from. The cache is never mutated.
+    """
+    tasks = []
+    for task_list in task_lists(data, list_order):
+        list_id = task_list["id"]
+        list_title = task_list.get("title", "Untitled")
+        for task in all_tasks_for_list(data, list_id):
+            copy = dict(task)
+            copy["_list_id"] = list_id
+            copy["_list_title"] = list_title
+            tasks.append(copy)
+    return tasks
+
+
+def due_on(tasks, day):
+    """Tasks whose due day is exactly `day`."""
+    return [task for task in tasks if due_date(task) == day]
+
+
+def overdue(tasks, today):
+    """Uncompleted tasks whose due day is strictly before `today`."""
+    result = []
+    for task in tasks:
+        if task.get("status") == "completed":
+            continue
+        day = due_date(task)
+        if day is not None and day < today:
+            result.append(task)
+    return result
+
+
+def search(tasks, query):
+    """Tasks whose title or notes contain `query`, case-insensitively."""
+    needle = query.casefold()
+    return [
+        task
+        for task in tasks
+        if needle in task.get("title", "").casefold()
+        or needle in (task.get("notes") or "").casefold()
+    ]
+
+
+def to_row(task, list_title, depth=0):
+    """Flattens a task into the uniform shape the renderer consumes.
+
+    The star marker is stripped out of the title and surfaced as a boolean,
+    so neither the renderer nor a JSON consumer has to parse it back out.
+    """
+    return {
+        "title": display_title(task),
+        "done": task.get("status") == "completed",
+        "due": due_date(task),
+        "starred": is_starred(task),
+        "list_title": list_title,
+        "depth": depth,
+    }

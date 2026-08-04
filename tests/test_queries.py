@@ -5,6 +5,7 @@ local_storage.load_data() returns — so nothing here touches the network,
 credentials, or the filesystem.
 """
 
+import datetime
 import unittest
 
 from tasks_tui import queries
@@ -162,6 +163,108 @@ class TestResolveListName(unittest.TestCase):
         data["task_lists"].append({"id": "L4", "title": "Archive", "deleted": True})
         with self.assertRaises(queries.ListResolutionError):
             queries.resolve_list_name(data, "Archive")
+
+
+class TestDueDate(unittest.TestCase):
+    def test_reads_utc_date_component_without_conversion(self):
+        # Google pins `due` to midnight UTC on the intended day. Converting
+        # to a timezone west of UTC would report the previous day.
+        task = {"due": "2026-08-05T00:00:00.000Z"}
+        self.assertEqual(queries.due_date(task), datetime.date(2026, 8, 5))
+
+    def test_returns_none_when_no_due_field(self):
+        self.assertIsNone(queries.due_date({"title": "x"}))
+
+    def test_returns_none_for_unparseable_value(self):
+        self.assertIsNone(queries.due_date({"due": "not-a-date"}))
+
+
+class TestDueFilters(unittest.TestCase):
+    def _tasks(self):
+        return [
+            {"id": "a", "due": "2026-08-04T00:00:00.000Z", "status": "needsAction"},
+            {"id": "b", "due": "2026-08-05T00:00:00.000Z", "status": "needsAction"},
+            {"id": "c", "due": "2026-08-03T00:00:00.000Z", "status": "needsAction"},
+            {"id": "d", "due": "2026-08-03T00:00:00.000Z", "status": "completed"},
+            {"id": "e", "status": "needsAction"},
+        ]
+
+    def test_due_on_matches_only_that_day(self):
+        today = datetime.date(2026, 8, 4)
+        ids = [t["id"] for t in queries.due_on(self._tasks(), today)]
+        self.assertEqual(ids, ["a"])
+
+    def test_due_on_ignores_tasks_with_no_due_date(self):
+        today = datetime.date(2026, 8, 4)
+        ids = [t["id"] for t in queries.due_on(self._tasks(), today)]
+        self.assertNotIn("e", ids)
+
+    def test_overdue_excludes_today_and_future(self):
+        today = datetime.date(2026, 8, 4)
+        ids = [t["id"] for t in queries.overdue(self._tasks(), today)]
+        self.assertEqual(ids, ["c"])
+
+    def test_overdue_excludes_completed_tasks(self):
+        today = datetime.date(2026, 8, 4)
+        ids = [t["id"] for t in queries.overdue(self._tasks(), today)]
+        self.assertNotIn("d", ids)
+
+
+class TestSearch(unittest.TestCase):
+    def _tasks(self):
+        return [
+            {"id": "a", "title": "Buy milk"},
+            {"id": "b", "title": "Call vet", "notes": "ask about milk allergy"},
+            {"id": "c", "title": "Ship CLI"},
+        ]
+
+    def test_matches_title_case_insensitively(self):
+        ids = [t["id"] for t in queries.search(self._tasks(), "MILK")]
+        self.assertEqual(ids, ["a", "b"])
+
+    def test_matches_notes(self):
+        ids = [t["id"] for t in queries.search(self._tasks(), "allergy")]
+        self.assertEqual(ids, ["b"])
+
+    def test_no_match_returns_empty(self):
+        self.assertEqual(queries.search(self._tasks(), "zzz"), [])
+
+
+class TestAllTasksGlobal(unittest.TestCase):
+    def test_tags_each_task_with_its_list(self):
+        rows = queries.all_tasks_global(_cache())
+        by_id = {t["id"]: t for t in rows}
+        self.assertEqual(by_id["t1"]["_list_title"], "Work")
+        self.assertEqual(by_id["t5"]["_list_id"], "L2")
+
+    def test_includes_subtasks(self):
+        ids = [t["id"] for t in queries.all_tasks_global(_cache())]
+        self.assertIn("t3", ids)
+
+    def test_does_not_mutate_the_cache(self):
+        data = _cache()
+        queries.all_tasks_global(data)
+        self.assertNotIn("_list_id", data["tasks"]["L1"][0])
+
+
+class TestToRow(unittest.TestCase):
+    def test_strips_star_marker_into_a_flag(self):
+        row = queries.to_row(
+            {"title": "⭐Ship CLI", "status": "needsAction"}, "Work"
+        )
+        self.assertEqual(row["title"], "Ship CLI")
+        self.assertTrue(row["starred"])
+
+    def test_marks_completed_tasks_done(self):
+        row = queries.to_row({"title": "x", "status": "completed"}, "Work")
+        self.assertTrue(row["done"])
+
+    def test_carries_due_date_and_depth(self):
+        row = queries.to_row(
+            {"title": "x", "due": "2026-08-05T00:00:00.000Z"}, "Work", depth=1
+        )
+        self.assertEqual(row["due"], datetime.date(2026, 8, 5))
+        self.assertEqual(row["depth"], 1)
 
 
 if __name__ == "__main__":
