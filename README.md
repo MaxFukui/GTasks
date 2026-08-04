@@ -70,8 +70,11 @@ tasks-tui search milk      # match title or notes
 tasks-tui sync             # pull fresh data from Google
 ```
 
-Flags: `-a` include completed tasks, `-l NAME` restrict to one list,
-`--json` machine-readable output, `-q` hide the staleness footer.
+Flags: `-a` (include completed), `--json` (machine-readable), `-q` (hide staleness).
+On `fav`, `today`, `overdue`, and `search`, add `-l NAME` to restrict to one list.
+
+Without a local cache, exits 1 with the message: `no local cache; run 'tasks-tui sync' or launch the TUI first`.
+Exit codes: 0 (success), 1 (runtime error), 2 (usage error).
 
 Completed tasks are hidden by default, independent of the TUI's
 `hide_completed` setting. Output drops colour automatically when piped, and
