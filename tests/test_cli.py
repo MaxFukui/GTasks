@@ -458,5 +458,257 @@ class TestShortIdMapping(_CliCase):
         self.assertEqual(mapping["1"]["task_id"], "t4")
 
 
+class _FakeGoogleReq:
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+
+    def execute(self):
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+class _FakeGoogleTasks:
+    """Mimics service.tasks() for sync_to_google(): list() + patch()."""
+
+    def __init__(self, google_state, fail_patch=False):
+        self._state = google_state  # {list_id: [task_dict, ...]}
+        self.fail_patch = fail_patch
+        self.patch_calls = []
+
+    def list(self, tasklist, showHidden=True):
+        return _FakeGoogleReq({"items": self._state.get(tasklist, [])})
+
+    def patch(self, tasklist, task, body):
+        self.patch_calls.append((tasklist, task, body))
+        if self.fail_patch:
+            return _FakeGoogleReq(error=RuntimeError("network down"))
+        return _FakeGoogleReq({})
+
+
+class _FakeGoogleTasklists:
+    """Mimics service.tasklists() for sync_to_google()'s list-rename check,
+    which runs unconditionally (before any per-task syncing) whenever the
+    service is dirty. None of these fixtures rename a list, so an empty
+    items list lets sync_to_google() fall straight through to tasks()."""
+
+    def list(self):
+        return _FakeGoogleReq({"items": []})
+
+
+class _FakeGoogleService:
+    def __init__(self, google_state, fail_patch=False):
+        self._tasks = _FakeGoogleTasks(google_state, fail_patch=fail_patch)
+        self._tasklists = _FakeGoogleTasklists()
+
+    def tasks(self):
+        return self._tasks
+
+    def tasklists(self):
+        return self._tasklists
+
+
+class _DoneCase(unittest.TestCase):
+    """Base case for `done`: a temp cache/short-ids pair, plus a
+    TaskService whose __init__ is monkeypatched so `TaskService()` inside
+    cli.py's _verb_done never touches real credentials or the network.
+    """
+
+    def setUp(self):
+        fd, self.cache_path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.remove(self.cache_path)
+        os.environ["GTASK_CACHE_FILE"] = self.cache_path
+
+        fd, self.short_ids_path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.remove(self.short_ids_path)
+        os.environ["GTASK_SHORT_IDS_FILE"] = self.short_ids_path
+
+        self.addCleanup(os.environ.pop, "GTASK_CACHE_FILE", None)
+        self.addCleanup(os.environ.pop, "GTASK_SHORT_IDS_FILE", None)
+        self.addCleanup(self._remove_if_exists, self.cache_path)
+        self.addCleanup(self._remove_if_exists, self.short_ids_path)
+
+    def _remove_if_exists(self, path):
+        if os.path.exists(path):
+            os.remove(path)
+
+    def _install_fake_task_service(self, data, google_service):
+        import tasks_tui.task_service as ts_module
+
+        def fake_init(instance):
+            instance.data = data
+            instance.dirty = False
+            instance.service = google_service
+            instance.initial_sync_completed = True
+            instance.active_list_id = None
+
+        original_init = ts_module.TaskService.__init__
+        ts_module.TaskService.__init__ = fake_init
+        self.addCleanup(setattr, ts_module.TaskService, "__init__", original_init)
+
+    def _seed_mapping(self, mapping):
+        import tasks_tui.shortids as shortids_module
+        shortids_module.write(mapping)
+
+    def run_cli(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        code = cli.run(argv, stdout=out, stderr=err)
+        return code, out.getvalue(), err.getvalue()
+
+
+class TestDoneHappyPath(_DoneCase):
+    def test_marks_done_and_syncs(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService(
+            {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]}
+        )
+        self._install_fake_task_service(data, google)
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+
+        code, out, err = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 0)
+        self.assertIn('marked "Ship CLI" done', out)
+        self.assertIn("synced", out)
+        self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
+        self.assertEqual(len(google.tasks().patch_calls), 1)
+
+    def test_cascades_to_subtasks_like_the_tui_does(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "p1", "title": "Parent", "status": "needsAction"},
+                {"id": "c1", "title": "Child", "status": "needsAction",
+                 "parent": "p1"},
+            ]},
+        }
+        google = _FakeGoogleService({"L1": [
+            {"id": "p1", "title": "Parent", "status": "needsAction"},
+            {"id": "c1", "title": "Child", "status": "needsAction",
+             "parent": "p1"},
+        ]})
+        self._install_fake_task_service(data, google)
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "p1"}})
+
+        code, _, _ = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 0)
+        by_id = {t["id"]: t for t in data["tasks"]["L1"]}
+        self.assertEqual(by_id["p1"]["status"], "completed")
+        self.assertEqual(by_id["c1"]["status"], "completed")
+
+
+class TestDoneAlreadyDone(_DoneCase):
+    def test_no_op_does_not_toggle_or_sync(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "completed"},
+            ]},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._install_fake_task_service(data, google)
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+
+        code, out, _ = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 0)
+        self.assertIn('"Ship CLI" is already done', out)
+        self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
+        self.assertEqual(len(google.tasks().patch_calls), 0)
+
+
+class TestDoneMissingMapping(_DoneCase):
+    def test_no_mapping_file_exits_2(self):
+        code, out, err = self.run_cli(["done", "1"])
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("no task numbered 1", err)
+
+    def test_number_not_in_mapping_exits_2(self):
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+        code, out, err = self.run_cli(["done", "9"])
+        self.assertEqual(code, 2)
+        self.assertIn("no task numbered 9", err)
+
+
+class TestDoneStaleMapping(_DoneCase):
+    def test_task_deleted_since_the_listing_exits_2(self):
+        data = {"task_lists": [{"id": "L1", "title": "Work"}], "tasks": {"L1": []}}
+        google = _FakeGoogleService({"L1": []})
+        self._install_fake_task_service(data, google)
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "gone"}})
+
+        code, out, err = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("no longer exists", err)
+
+
+class TestDoneSyncFailure(_DoneCase):
+    def test_local_toggle_kept_when_sync_fails(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService(
+            {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]},
+            fail_patch=True,
+        )
+        self._install_fake_task_service(data, google)
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+
+        code, out, err = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 1)
+        self.assertIn('marked "Ship CLI" done locally', out)
+        self.assertIn("sync failed", err)
+        self.assertIn("tasks-tui sync", err)
+        # The local cache still reflects the toggle even though the push
+        # failed — nothing is rolled back, matching sync_to_google()'s own
+        # diff-based retry safety (a later `sync` will push it).
+        self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
+
+
+class TestDoneConstructionFailure(_DoneCase):
+    def test_task_service_construction_failure_exits_1(self):
+        import tasks_tui.task_service as ts_module
+
+        def failing_init(instance):
+            raise RuntimeError("no credentials")
+
+        original_init = ts_module.TaskService.__init__
+        ts_module.TaskService.__init__ = failing_init
+        self.addCleanup(setattr, ts_module.TaskService, "__init__", original_init)
+
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+
+        code, out, err = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("could not connect", err)
+
+
+class TestDoneArgparse(_DoneCase):
+    def test_non_integer_argument_exits_2(self):
+        # argparse's own type=int error goes to the real stderr, not the
+        # injected stream — only the return code is asserted, same pattern
+        # already used for the typo'd-verb case.
+        code, _, _ = self.run_cli(["done", "abc"])
+        self.assertEqual(code, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

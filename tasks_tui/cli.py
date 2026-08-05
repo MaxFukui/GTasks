@@ -79,6 +79,14 @@ def _build_parser():
 
     add_common(subparsers.add_parser("sync", help="pull from Google Tasks"))
 
+    done_verb = subparsers.add_parser(
+        "done", help="mark a task done and push it to Google"
+    )
+    done_verb.add_argument(
+        "number", type=int,
+        help="the number a listing command just printed next to the task",
+    )
+
     return parser
 
 
@@ -193,6 +201,59 @@ def _verb_sync(stdout, stderr):
     return EXIT_OK
 
 
+def _verb_done(number, stdout, stderr):
+    """Marks task `number` done and pushes it to Google before returning.
+
+    Needs credentials, so TaskService is imported here, same as
+    _verb_sync — never at module scope, so the CLI's read-only verbs never
+    pay for it and unicurses isolation is unaffected.
+    """
+    mapping = shortids.read()
+    entry = mapping.get(str(number)) if mapping else None
+    if (
+        not isinstance(entry, dict)
+        or "list_id" not in entry
+        or "task_id" not in entry
+    ):
+        print(
+            f"no task numbered {number}; run a list command first",
+            file=stderr,
+        )
+        return EXIT_USAGE
+    list_id, task_id = entry["list_id"], entry["task_id"]
+
+    from .task_service import TaskService
+
+    try:
+        service = TaskService()
+    except Exception as exc:
+        print(f"could not connect: {exc}", file=stderr)
+        return EXIT_ERROR
+
+    task = service.get_task(list_id, task_id)
+    if task is None or task.get("deleted"):
+        print("task no longer exists; run a list command again", file=stderr)
+        return EXIT_USAGE
+
+    title = queries.display_title(task)
+    if task.get("status") == "completed":
+        print(f'"{title}" is already done', file=stdout)
+        return EXIT_OK
+
+    service.toggle_task_status(list_id, task_id)
+
+    try:
+        service.sync_to_google()
+    except Exception as exc:
+        print(f'✓ marked "{title}" done locally', file=stdout)
+        print(f"✗ sync failed: {exc}", file=stderr)
+        print("  run 'tasks-tui sync' to retry", file=stderr)
+        return EXIT_ERROR
+
+    print(f'✓ marked "{title}" done — synced', file=stdout)
+    return EXIT_OK
+
+
 def run(argv, stdout=None, stderr=None):
     """Runs one CLI invocation. Returns an exit code; never calls sys.exit."""
     stdout = stdout or sys.stdout
@@ -211,6 +272,9 @@ def run(argv, stdout=None, stderr=None):
 
     if args.verb == "sync":
         return _verb_sync(stdout, stderr)
+
+    if args.verb == "done":
+        return _verb_done(args.number, stdout, stderr)
 
     data, path = _load_cache(stderr)
     if data is None:
