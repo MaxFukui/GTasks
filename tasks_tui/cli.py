@@ -15,6 +15,7 @@ from . import freshness
 from . import local_storage
 from . import queries
 from . import render
+from . import shortids
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -255,5 +256,18 @@ def run(argv, stdout=None, stderr=None):
         if group:
             rows.sort(key=lambda row: row["list_title"])
 
+    # Numbers and the mapping come from this exact enumeration, in this
+    # exact order — the printed number and what `done <N>` acts on can
+    # never diverge, because both are derived from the same pass over the
+    # same finished row list.
+    mapping = {}
+    for i, row in enumerate(rows, start=1):
+        row["number"] = i
+        mapping[i] = {
+            "list_id": row["raw"].get("_list_id"),
+            "task_id": row["raw"].get("id"),
+        }
+
     text = render.render(rows, mode, group_by_list=group, sync_info=info)
+    shortids.write(mapping)
     return _emit(text, freshness.format_age(info), args, mode, stdout, stderr)

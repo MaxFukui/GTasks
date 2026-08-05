@@ -61,13 +61,22 @@ class _CliCase(unittest.TestCase):
         with os.fdopen(fd, "w") as fh:
             json.dump(_cache_dict(), fh)
         os.environ["GTASK_CACHE_FILE"] = self.cache_path
+
+        fd, self.short_ids_path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.remove(self.short_ids_path)  # start absent
+        os.environ["GTASK_SHORT_IDS_FILE"] = self.short_ids_path
+
         os.environ["NO_COLOR"] = "1"
 
     def tearDown(self):
         os.environ.pop("GTASK_CACHE_FILE", None)
+        os.environ.pop("GTASK_SHORT_IDS_FILE", None)
         os.environ.pop("NO_COLOR", None)
         if os.path.exists(self.cache_path):
             os.remove(self.cache_path)
+        if os.path.exists(self.short_ids_path):
+            os.remove(self.short_ids_path)
 
     def run_cli(self, argv):
         out, err = io.StringIO(), io.StringIO()
@@ -311,13 +320,22 @@ class TestListVerbSubtasks(unittest.TestCase):
         with os.fdopen(fd, "w") as fh:
             json.dump(self._cache(), fh)
         os.environ["GTASK_CACHE_FILE"] = self.cache_path
+
+        fd, self.short_ids_path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        os.remove(self.short_ids_path)
+        os.environ["GTASK_SHORT_IDS_FILE"] = self.short_ids_path
+
         os.environ.pop("NO_COLOR", None)
 
     def tearDown(self):
         os.environ.pop("GTASK_CACHE_FILE", None)
+        os.environ.pop("GTASK_SHORT_IDS_FILE", None)
         os.environ.pop("NO_COLOR", None)
         if os.path.exists(self.cache_path):
             os.remove(self.cache_path)
+        if os.path.exists(self.short_ids_path):
+            os.remove(self.short_ids_path)
 
     def run_cli(self, argv):
         out, err = _TTYStringIO(), io.StringIO()
@@ -330,8 +348,21 @@ class TestListVerbSubtasks(unittest.TestCase):
         parent_idx = next(i for i, ln in enumerate(lines) if "Parent A" in ln)
         child_idx = next(i for i, ln in enumerate(lines) if "Child of A" in ln)
         self.assertEqual(child_idx, parent_idx + 1)
-        self.assertTrue(lines[child_idx].startswith("    "))
-        self.assertFalse(lines[parent_idx].startswith("    "))
+        # The number prefix comes before the depth indent (Task 3), so
+        # indentation now shows up as extra space *after* the number rather
+        # than at the start of the line. str.split(None, 1) would collapse
+        # that indent away along with the number (both are just runs of
+        # space characters with nothing to tell them apart), so instead
+        # strip only the leading digits and compare how many spaces remain
+        # before the glyph — the child's indent must be exactly one level
+        # (two spaces) deeper than the parent's.
+        def leading_spaces(line):
+            body = line.lstrip("0123456789")
+            return len(body) - len(body.lstrip(" "))
+
+        parent_spaces = leading_spaces(lines[parent_idx])
+        child_spaces = leading_spaces(lines[child_idx])
+        self.assertEqual(child_spaces, parent_spaces + 2)
 
     def test_order_is_parent_then_child_not_raw_cache_order(self):
         _, out, _ = self.run_cli(["list", "Work", "-a"])
@@ -361,6 +392,70 @@ class TestListVerbSubtasks(unittest.TestCase):
         _, out, _ = self.run_cli(["list", "Work", "-a"])
         self.assertIn("Parent C", out)
         self.assertIn("Child of C done", out)
+
+
+class TestShortIdMapping(_CliCase):
+    """Every listing verb writes number -> (list_id, task_id) after
+    rendering, matching what the pretty-mode output shows the user."""
+
+    def _read_mapping(self):
+        with open(self.short_ids_path) as f:
+            return json.load(f)
+
+    def test_fav_writes_a_mapping_for_every_printed_task(self):
+        self.run_cli(["fav"])
+        mapping = self._read_mapping()
+        # _cache_dict()'s starred tasks are t1 (Work) and t4 (Home); fav
+        # groups and sorts by list_title, so Home (t4) sorts before Work
+        # (t1) alphabetically.
+        self.assertEqual(mapping["1"], {"list_id": "L2", "task_id": "t4"})
+        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t1"})
+
+    def test_list_verb_writes_a_mapping_in_parent_child_order(self):
+        self.run_cli(["list", "Work"])
+        mapping = self._read_mapping()
+        self.assertEqual(mapping["1"], {"list_id": "L1", "task_id": "t1"})
+        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t3"})
+
+    def test_lists_verb_does_not_write_a_mapping(self):
+        self.run_cli(["fav"])  # seed a mapping first
+        os.remove(self.short_ids_path)
+        self.run_cli(["lists"])
+        self.assertFalse(os.path.exists(self.short_ids_path))
+
+    def test_a_second_listing_overwrites_the_first_mapping(self):
+        self.run_cli(["fav"])
+        first = self._read_mapping()
+        self.assertIn("2", first)
+        self.run_cli(["list", "Home"])
+        second = self._read_mapping()
+        self.assertNotIn("2", second)  # Home has exactly one task
+
+    def test_json_mode_still_writes_the_mapping(self):
+        self.run_cli(["fav", "--json"])
+        mapping = self._read_mapping()
+        self.assertIn("1", mapping)
+
+    def test_empty_result_writes_an_empty_mapping(self):
+        self.run_cli(["search", "zzz"])
+        self.assertEqual(self._read_mapping(), {})
+
+    def test_pretty_output_shows_the_same_numbers_as_the_mapping(self):
+        # _CliCase.setUp sets NO_COLOR=1, which forces plain mode regardless
+        # of isatty() (render.pick_mode: `if not is_tty or no_color: PLAIN`)
+        # — and plain mode never shows numbers. Unset it here so a TTY
+        # stdout actually gets pretty mode, the only mode this test can
+        # observe numbering in.
+        os.environ.pop("NO_COLOR", None)
+        out_stream = _TTYStringIO()
+        err_stream = io.StringIO()
+        cli.run(["fav"], stdout=out_stream, stderr=err_stream)
+        out = out_stream.getvalue()
+        mapping = self._read_mapping()
+        lines_with_1 = [ln for ln in out.splitlines() if ln.lstrip().startswith("1")]
+        self.assertTrue(lines_with_1)
+        self.assertIn("Buy milk", lines_with_1[0])  # mapping["1"] is t4
+        self.assertEqual(mapping["1"]["task_id"], "t4")
 
 
 if __name__ == "__main__":
