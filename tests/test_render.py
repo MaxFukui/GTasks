@@ -161,6 +161,48 @@ class TestPretty(unittest.TestCase):
         )
         self.assertNotIn("\x1b[31m", out)
 
+    def test_numbers_are_not_printed_when_absent_from_the_row(self):
+        out = render.render(_rows(), render.PRETTY, group_by_list=True)
+        self.assertNotIn("1  ", out)
+
+    def test_prints_the_row_number_when_present(self):
+        rows = [dict(_rows()[0], number=1)]
+        out = render.render(rows, render.PRETTY, group_by_list=False)
+        self.assertTrue(out.lstrip().startswith("1"))
+
+    def test_numbers_run_sequentially_across_group_headers(self):
+        rows = [
+            dict(_rows()[0], number=1),  # Work
+            dict(_rows()[2], number=2),  # Home — different group
+        ]
+        out = render.render(rows, render.PRETTY, group_by_list=True)
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        numbered = [ln for ln in lines if ln.lstrip()[:1].isdigit()]
+        self.assertEqual(len(numbered), 2)
+        self.assertTrue(numbered[0].lstrip().startswith("1"))
+        self.assertTrue(numbered[1].lstrip().startswith("2"))
+
+    def test_number_prefix_comes_before_the_depth_indent(self):
+        rows = [dict(_rows()[0], number=1, depth=1, starred=False)]
+        out = render.render(rows, render.PRETTY, group_by_list=False)
+        # depth=1 indents by 4 spaces (see test_indents_subtasks_by_depth);
+        # the number prefix comes first, so the line does not start with
+        # the raw 4-space indent the way an unnumbered row does.
+        self.assertFalse(out.startswith("    "))
+        self.assertIn("1", out.split("○")[0])
+
+    def test_plain_mode_never_shows_a_number_even_if_present(self):
+        rows = [dict(_rows()[0], number=1)]
+        out = render.render(rows, render.PLAIN, group_by_list=False)
+        self.assertEqual(out, "[ ] Ship CLI  due 2026-08-05")
+
+    def test_json_mode_never_shows_a_number_even_if_present(self):
+        rows = [dict(_rows()[0], number=1)]
+        payload = json.loads(
+            render.render(rows, render.JSON, group_by_list=False)
+        )
+        self.assertNotIn("number", payload["tasks"][0])
+
 
 class TestJson(unittest.TestCase):
     def test_payload_carries_tasks_and_sync_info(self):
