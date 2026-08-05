@@ -19,26 +19,75 @@ A simple, fast, and intuitive Terminal User Interface (TUI) for Google Tasks.
 
 ## Installation
 
-1.  **Install via pip:**
+### Install for global use
 
-    ```bash
-    pip install tasks-tui-app
-    ```
+The recommended installation for a command-line application is
+[pipx](https://pipx.pypa.io/). It keeps the dependencies isolated while making
+`tasks-tui` available everywhere, without requiring virtual-environment
+activation.
 
-2.  **Clone the repository (optional, for development):**
+Install `pipx` first if it is not already installed:
 
-    ```bash
-    git clone https://github.com/your-username/Gtask.git
-    cd Gtask
-    ```
+* **macOS (Homebrew):** `brew install pipx`
+* **Linux:** install `pipx` using your distribution's package manager, such as
+  `sudo apt install pipx`
 
-3.  **Install the dependencies (if cloning for development):**
+Then enable its command directory and install the application:
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+pipx ensurepath
+pipx install tasks-tui-app
+```
 
-4.  **Enable the Google Tasks API [Guide](https://developers.google.com/workspace/tasks/quickstart/python)**
+For the current source checkout instead of the published package, run this
+from the repository directory:
+
+```bash
+pipx install --editable .
+```
+
+After changing the package metadata or dependencies, update that editable
+installation with:
+
+```bash
+pipx install --force --editable .
+```
+
+Open a new terminal, or refresh your shell's command lookup, if `tasks-tui`
+is not found immediately.
+
+### Development installation
+
+To create the repository's local virtual environment and install the project:
+
+```bash
+git clone https://github.com/your-username/Gtask.git
+cd Gtask
+bash setup.sh
+```
+
+This installs everything into `.venv`; it does **not** make `tasks-tui`
+globally available. You can run the local installation directly:
+
+```bash
+.venv/bin/tasks-tui
+```
+
+Alternatively, activate it for the current terminal session:
+
+```bash
+source .venv/bin/activate
+tasks-tui
+```
+
+Activation only changes the shell process where it is run. Running
+`sh setup.sh` cannot change the `PATH` of the terminal that launched it, and
+on many Linux systems `/bin/sh` does not support the `source` command. Use
+`bash setup.sh` for the current installer.
+
+### Google Tasks API setup
+
+Enable the Google Tasks API [Guide](https://developers.google.com/workspace/tasks/quickstart/python)
 
     *   Go to the [Google API Console](https://console.developers.google.com/).
     *   Create a new project.
