@@ -18,15 +18,18 @@ tasks from the command line.
 
 ```
 tasks-tui fav
-⭐ Work
-1  ○ Ship CLI mode        due 2026-08-05
-2  ○ Review PR
-⭐ Home
-3  ○ Buy milk
+Work
+1    ○ Ship CLI mode        due 2026-08-05
+2    ○ Review PR
+Home
+3    ○ Buy milk
 
 tasks-tui done 2
 ✓ marked "Review PR" done — synced
 ```
+
+(Group headers in pretty mode are the plain list title, bold — no star.
+Verified against the shipped renderer rather than assumed.)
 
 `N` is ephemeral: it means whatever the most recent listing command printed
 at that position. Running another listing command overwrites it.
@@ -36,9 +39,23 @@ at that position. Running another listing command overwrites it.
 ```
 tasks_tui/
   shortids.py    NEW      write/read the number -> (list_id, task_id) mapping
-  cli.py         CHANGED  every listing verb writes the mapping; new `done` verb
+  render.py      CHANGED  opt-in row-number prefix, pretty mode only
+  cli.py         CHANGED  every listing verb assigns numbers + writes the
+                           mapping; new `done` verb
   local_storage.py CHANGED  short_ids_path(), mirroring cache_path()
 ```
+
+**Addendum (found during planning, ratified before implementation):** the
+example above requires the renderer to print the number somewhere, which
+the original draft of this section omitted from the file list. Ratified
+scope: the number prefix appears in **pretty mode only** — plain (piped)
+output and `--json` output are unchanged by this feature, since plain mode
+is what any existing script consuming this CLI's output depends on, and
+JSON already carries the real, permanent task `id`, a better identifier
+for scripting than an ephemeral number. `render.py`'s existing renderer
+prints a row's number if and only if the row already carries a `number`
+key — a row without one renders exactly as it does today, so this stays
+purely additive to the read-only CLI mode shipped earlier.
 
 Flow:
 
