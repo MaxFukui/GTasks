@@ -5,6 +5,7 @@
 
 from unicurses import *
 from dateutil.parser import isoparse
+import contextlib
 import time
 import datetime
 import tempfile
@@ -1088,12 +1089,35 @@ class UIManager:
             i += 1
 
     def start_sync_animation(self):
-        """Starts the sync animation in a separate thread."""
+        """Starts the sync animation in a separate thread.
+
+        The thread is a daemon: its loop only exits when `syncing` goes False,
+        so a non-daemon thread would keep the interpreter alive indefinitely if
+        anything ever stopped stop_sync_animation() from running.
+        """
         if not self.syncing:
             self.syncing = True
             nodelay(self.stdscr, True)
-            self.animation_thread = threading.Thread(target=self._sync_animation)
+            self.animation_thread = threading.Thread(
+                target=self._sync_animation, daemon=True
+            )
             self.animation_thread.start()
+
+    @contextlib.contextmanager
+    def sync_animation(self):
+        """Runs the spinner for the duration of the block, stopping it even if
+        the block raises.
+
+        Callers used to start and stop the spinner as two bare statements
+        around the sync. A raising sync skipped the stop, leaving `syncing`
+        True and the animation thread spinning forever — the app hung instead
+        of surfacing the error.
+        """
+        self.start_sync_animation()
+        try:
+            yield
+        finally:
+            self.stop_sync_animation()
 
     def stop_sync_animation(self):
         """Stops the sync animation."""

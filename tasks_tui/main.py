@@ -831,9 +831,8 @@ def main_loop(stdscr):
     keypad(stdscr, True)
     wtimeout(stdscr, 500)  # Wake up every 500ms to check for auto-sync
 
-    ui_manager.start_sync_animation()
-    app_state.service.sync_from_google()
-    ui_manager.stop_sync_animation()
+    with ui_manager.sync_animation():
+        app_state.service.sync_from_google()
     app_state.refresh_data()
 
     running = True
