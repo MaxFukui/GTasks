@@ -245,9 +245,10 @@ def _verb_done(number, stdout, stderr):
     try:
         service.sync_to_google()
     except Exception as exc:
+        service.save_local_data()
         print(f'✓ marked "{title}" done locally', file=stdout)
-        print(f"✗ sync failed: {exc}", file=stderr)
-        print("  run 'tasks-tui sync' to retry", file=stderr)
+        print(f"✗ could not reach Google: {exc}", file=stderr)
+        print("  it will push next time you open the TUI", file=stderr)
         return EXIT_ERROR
 
     print(f'✓ marked "{title}" done — synced', file=stdout)

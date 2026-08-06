@@ -655,7 +655,7 @@ class TestDoneStaleMapping(_DoneCase):
 
 
 class TestDoneSyncFailure(_DoneCase):
-    def test_local_toggle_kept_when_sync_fails(self):
+    def test_local_toggle_persisted_to_disk_when_sync_fails(self):
         data = {
             "task_lists": [{"id": "L1", "title": "Work"}],
             "tasks": {"L1": [
@@ -673,12 +673,18 @@ class TestDoneSyncFailure(_DoneCase):
 
         self.assertEqual(code, 1)
         self.assertIn('marked "Ship CLI" done locally', out)
-        self.assertIn("sync failed", err)
-        self.assertIn("tasks-tui sync", err)
-        # The local cache still reflects the toggle even though the push
-        # failed — nothing is rolled back, matching sync_to_google()'s own
-        # diff-based retry safety (a later `sync` will push it).
-        self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
+        self.assertIn("could not reach Google", err)
+        self.assertIn("it will push next time you open the TUI", err)
+        # sync_to_google() only calls save_local_data() as its very last
+        # line, never reached when the push fails — so the toggle must be
+        # persisted independently, or it would exist only in this
+        # process's memory and be lost when the process exits. Re-read
+        # the on-disk cache file (not the in-memory `data` dict, which
+        # would look "correct" here regardless of whether anything was
+        # actually written) to prove it really was saved.
+        with open(self.cache_path) as f:
+            on_disk = json.load(f)
+        self.assertEqual(on_disk["tasks"]["L1"][0]["status"], "completed")
 
 
 class TestDoneConstructionFailure(_DoneCase):
