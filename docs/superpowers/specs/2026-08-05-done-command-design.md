@@ -179,8 +179,16 @@ command several times — batching is out of scope for v1.
 
 - Written only after a successful render, so a crash mid-render never
   leaves a mapping pointing at rows the user never saw.
-- Fully overwritten, not merged, by every listing verb — always reflects
-  only the most recent listing.
+- **Written only when the render was pretty mode** (found and ratified
+  during the final whole-branch review). Numbers only ever print in pretty
+  mode; a plain, `--json`, or `NO_COLOR` listing shows no numbers at all,
+  so writing a mapping for it would silently repoint an existing `done N`
+  at whatever that invisible listing happened to contain — the exact
+  failure mode the rule above exists to prevent. A piped or scripted
+  listing now leaves the mapping untouched, so `done N` keeps referring to
+  the last listing the user actually saw numbers in.
+- Fully overwritten, not merged, by every listing verb whose render was
+  pretty mode — always reflects only the most recent such listing.
 - No locking, no concurrency handling, matching `local_tasks.json`, which
   already has none. Single-user, single-machine tool.
 - Missing or malformed file when `done` runs produces the same

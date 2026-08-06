@@ -78,6 +78,26 @@ flush-on-quit/idle/`w` is, today, the only thing that pushes. Expanding
 as a larger, separate change to already-shipped behavior. Task 5's brief
 and tests below already reflect this fix.
 
+**Third addendum (found and ratified during the final whole-branch
+review, after all six tasks were individually marked complete):**
+`shortids.write()` was called unconditionally after every successful
+render in Task 4, but numbers only ever print in pretty mode (first
+addendum, above). A piped, `--json`, or `NO_COLOR` listing therefore
+overwrote the mapping with entries for numbers the user never saw,
+silently repointing a still-valid `done N` at the wrong task. Ratified
+fix: `cli.py` writes the mapping only when the render mode was pretty —
+`if mode == render.PRETTY: shortids.write(mapping)` — leaving the mapping
+untouched by any listing whose numbers were never shown. The same review
+pass also fixed two implementation gaps that needed no design ruling: (a)
+`_verb_done`'s failure branch could itself report a false "done locally"
+if the local disk write also failed, since `save_data()` swallows
+`IOError` — fixed by checking the save actually reached disk before
+printing success; (b) `shortids.write()` had no error handling at all, so
+an unwritable mapping file crashed a previously-safe read-only listing
+verb with a raw traceback — fixed by catching the write failure and
+reporting it the way every other error path in `cli.py` already does. Task
+4's and Task 5's code below already reflect all three fixes.
+
 ---
 
 ## File Structure
