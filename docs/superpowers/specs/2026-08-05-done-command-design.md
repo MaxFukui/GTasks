@@ -96,13 +96,35 @@ is the only way a one-shot command gets the same guarantee.
 of pending operations — every call diffs the *entire* local cache against
 Google's current state, field by field, and pushes whatever differs
 (`task_service.py:585-586`, `598-599`). This makes a failed sync safe to
-retry: the local file is not overwritten until `save_local_data()` runs at
-the very end of `sync_to_google` (`task_service.py:602`), so a failed push
-leaves the on-disk cache exactly as it was before `done` ran, while the
-in-memory toggle survives into the *next* successful sync's diff and is
-pushed then. Retrying costs nothing extra — the diff, not a queue, means
-running `sync` any number of times sends the same single `patch` call until
-it succeeds, never duplicates it.
+retry *for a long-lived process*: the diff, not a queue, means calling
+`sync_to_google()` any number of times sends the same single `patch` call
+until it succeeds, never duplicates it.
+
+**Correction (found during Task 5's review, before it was found by a real
+user):** the paragraph above described the retry story from the TUI's
+point of view, where the process stays alive to see "the next successful
+sync." A one-shot CLI command does not stay alive — it has already exited
+by the time any such retry could happen. `save_local_data()` only runs as
+the *last* line of `sync_to_google()` (`task_service.py:606`), so on a
+failed push that line is never reached and the in-memory toggle would
+vanish the instant `done` returns, taken with it. The originally-drafted
+failure message (`✓ marked "<title>" done locally`) was therefore false —
+nothing was actually written to disk — and its suggested recovery,
+`run 'tasks-tui sync' to retry`, was actively destructive: `sync` calls
+`sync_from_google()` (a *pull*), which would silently overwrite the
+(unsaved, and even if saved, un-pushed) local toggle with Google's stale
+state.
+
+Ratified fix, minimal scope: on a failed sync, `done` calls
+`service.save_local_data()` itself before reporting the failure, so the
+toggle survives to disk even though the push didn't land. The failure
+message drops the specific-but-wrong retry command; there is currently no
+CLI verb that pushes without also pulling, so the honest guidance is that
+the change will go out the next time something *does* push — today, that
+means the TUI's existing flush-on-quit/idle/`w` behavior
+(`main.py:424-428`). Building a CLI-level "push what's pending" verb is a
+larger change to the already-shipped `sync` verb's semantics and is
+explicitly out of scope for this plan.
 
 ## Command Behavior
 
@@ -130,10 +152,13 @@ it succeeds, never duplicates it.
 6. Otherwise: `toggle_task_status(list_id, task_id)` — completes it,
    cascades to subtasks per existing behavior — then `sync_to_google()`.
 7. Sync succeeds: `✓ marked "<title>" done — synced`, exit 0.
-8. Sync fails: `✓ marked "<title>" done locally` /
-   `✗ sync failed: <reason>` / `run 'tasks-tui sync' to retry`, exit 1. The
-   local toggle is kept, not rolled back — per the persistence model above,
-   nothing is lost and a later `sync` completes the push.
+8. Sync fails: `done` calls `save_local_data()` itself so the toggle
+   survives to disk, prints `✓ marked "<title>" done locally` /
+   `✗ could not reach Google: <reason>` /
+   `  it will push next time you open the TUI`, exit 1. The local toggle is
+   kept, not rolled back — see the Persistence Model correction above for
+   why the toggle must be explicitly saved here, and why the recovery
+   guidance points at the TUI rather than at `sync`.
 
 `done` accepts exactly one number. Marking several tasks means running the
 command several times — batching is out of scope for v1.

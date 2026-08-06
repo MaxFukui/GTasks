@@ -38,8 +38,11 @@ mirroring what the TUI already does on every quit, idle timeout, or `w`.
   `test_render.py` may need to change because of this feature.
 - **`done` pushes to Google before the command exits.** It does not defer
   to a later `sync` the way an idle TUI session would — a one-shot CLI
-  process has no idle time to defer through. On a sync failure, the local
-  toggle is kept, not rolled back, and the command exits 1.
+  process has no idle time to defer through. On a sync failure, `done`
+  explicitly calls `save_local_data()` so the toggle survives to disk (see
+  the second spec addendum below — the original design assumed the toggle
+  would survive in memory until a later retry, which is false for a
+  process that has already exited), and the command exits 1.
 - **Exit codes:** 0 success (marked and synced, or already done); 1 runtime
   error (`TaskService()` construction failed, or sync failed after a
   successful local toggle); 2 usage error (no mapping, unresolvable number,
@@ -57,6 +60,23 @@ it is the format anything currently parsing this CLI's output depends on.
 JSON is unaffected either way — it already carries the real, permanent
 `id` (from the earlier `--json` fix), a better identifier for scripting
 than an ephemeral number.
+
+**Second addendum (found and ratified during Task 5's review, before Task
+5 was marked complete):** the approved spec's failure-path design said a
+failed sync's toggle "survives into the next successful sync" and
+suggested `run 'tasks-tui sync' to retry`. Both are wrong for a one-shot
+CLI process. `save_local_data()` runs only as the last line of
+`sync_to_google()` (`task_service.py:606`), never reached on failure, so
+the toggle would vanish the moment `done` exits unless saved explicitly —
+and `sync` calls `sync_from_google()` (a pull), so following that advice
+would overwrite the very change it claimed to help retry. Ratified fix,
+minimal scope: `done`'s failure branch calls `service.save_local_data()`
+itself, and the message drops the specific retry command in favor of
+`it will push next time you open the TUI` — the TUI's existing
+flush-on-quit/idle/`w` is, today, the only thing that pushes. Expanding
+`sync` into a push-then-pull verb was considered and explicitly deferred
+as a larger, separate change to already-shipped behavior. Task 5's brief
+and tests below already reflect this fix.
 
 ---
 
@@ -1052,7 +1072,7 @@ class TestDoneStaleMapping(_DoneCase):
 
 
 class TestDoneSyncFailure(_DoneCase):
-    def test_local_toggle_kept_when_sync_fails(self):
+    def test_local_toggle_persisted_to_disk_when_sync_fails(self):
         data = {
             "task_lists": [{"id": "L1", "title": "Work"}],
             "tasks": {"L1": [
@@ -1070,12 +1090,17 @@ class TestDoneSyncFailure(_DoneCase):
 
         self.assertEqual(code, 1)
         self.assertIn('marked "Ship CLI" done locally', out)
-        self.assertIn("sync failed", err)
-        self.assertIn("tasks-tui sync", err)
-        # The local cache still reflects the toggle even though the push
-        # failed — nothing is rolled back, matching sync_to_google()'s own
-        # diff-based retry safety (a later `sync` will push it).
-        self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
+        self.assertIn("could not reach Google", err)
+        self.assertIn("it will push next time you open the TUI", err)
+        # `sync_to_google()` only calls save_local_data() as its very last
+        # line, never reached on a failed push — so `done` must persist the
+        # toggle itself, or it would vanish the moment this process exits.
+        # Checking the in-memory `data` dict alone cannot prove that; it is
+        # the same object the fixture handed in regardless of whether
+        # anything was actually written. Re-read the cache file from disk.
+        with open(self.cache_path) as f:
+            on_disk = json.load(f)
+        self.assertEqual(on_disk["tasks"]["L1"][0]["status"], "completed")
 
 
 class TestDoneConstructionFailure(_DoneCase):
@@ -1179,9 +1204,18 @@ def _verb_done(number, stdout, stderr):
     try:
         service.sync_to_google()
     except Exception as exc:
+        # sync_to_google() only calls save_local_data() as its very last
+        # line, never reached when the push fails — so the toggle above
+        # would vanish the moment this process exits unless it is saved
+        # here explicitly. There is no CLI verb that pushes without also
+        # pulling (tasks-tui sync calls sync_from_google, a pull, which
+        # would overwrite this very change), so the message does not
+        # suggest one — the TUI's existing flush-on-quit/idle/w is, today,
+        # the only thing that pushes a pending local change.
+        service.save_local_data()
         print(f'✓ marked "{title}" done locally', file=stdout)
-        print(f"✗ sync failed: {exc}", file=stderr)
-        print("  run 'tasks-tui sync' to retry", file=stderr)
+        print(f"✗ could not reach Google: {exc}", file=stderr)
+        print("  it will push next time you open the TUI", file=stderr)
         return EXIT_ERROR
 
     print(f'✓ marked "{title}" done — synced', file=stdout)
