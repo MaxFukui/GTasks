@@ -344,5 +344,22 @@ def run(argv, stdout=None, stderr=None):
         }
 
     text = render.render(rows, mode, group_by_list=group, sync_info=info)
-    shortids.write(mapping)
-    return _emit(text, freshness.format_age(info), args, mode, stdout, stderr)
+    result = _emit(text, freshness.format_age(info), args, mode, stdout, stderr)
+
+    # Numbers only ever print in pretty mode (render.py's _render_pretty).
+    # Writing the mapping for a mode whose numbers were never shown would
+    # silently overwrite a still-valid mapping from an earlier pretty-mode
+    # listing, repointing a `done N` typed from memory at the wrong task.
+    if mode == render.PRETTY:
+        try:
+            shortids.write(mapping)
+        except OSError as exc:
+            # The query itself already succeeded and printed above — a
+            # failed follow-up mapping write must not crash an otherwise
+            # read-only, previously-safe listing verb with a raw traceback.
+            print(
+                f"warning: could not save the task numbers for 'done': {exc}",
+                file=stderr,
+            )
+
+    return result

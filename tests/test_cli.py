@@ -396,14 +396,29 @@ class TestListVerbSubtasks(unittest.TestCase):
 
 class TestShortIdMapping(_CliCase):
     """Every listing verb writes number -> (list_id, task_id) after
-    rendering, matching what the pretty-mode output shows the user."""
+    rendering, matching what the pretty-mode output shows the user — but
+    only when the render mode was actually pretty, since that's the only
+    mode where the numbers being mapped were ever shown (Finding 3)."""
 
     def _read_mapping(self):
         with open(self.short_ids_path) as f:
             return json.load(f)
 
+    def _run_pretty(self, argv):
+        # _CliCase.setUp sets NO_COLOR=1 and run_cli() uses a plain
+        # (non-TTY) io.StringIO, both of which force plain mode
+        # (render.pick_mode: `if not is_tty or no_color: PLAIN`) — and
+        # plain mode never writes the mapping. Unset NO_COLOR and use a
+        # TTY-reporting stdout so the listing actually renders in pretty
+        # mode, the only mode any of these tests can observe a write in.
+        os.environ.pop("NO_COLOR", None)
+        out_stream = _TTYStringIO()
+        err_stream = io.StringIO()
+        code = cli.run(argv, stdout=out_stream, stderr=err_stream)
+        return code, out_stream.getvalue(), err_stream.getvalue()
+
     def test_fav_writes_a_mapping_for_every_printed_task(self):
-        self.run_cli(["fav"])
+        self._run_pretty(["fav"])
         mapping = self._read_mapping()
         # _cache_dict()'s starred tasks are t1 (Work) and t4 (Home); fav
         # groups and sorts by list_title, so Home (t4) sorts before Work
@@ -412,50 +427,121 @@ class TestShortIdMapping(_CliCase):
         self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t1"})
 
     def test_list_verb_writes_a_mapping_in_parent_child_order(self):
-        self.run_cli(["list", "Work"])
+        self._run_pretty(["list", "Work"])
         mapping = self._read_mapping()
         self.assertEqual(mapping["1"], {"list_id": "L1", "task_id": "t1"})
         self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t3"})
 
     def test_lists_verb_does_not_write_a_mapping(self):
-        self.run_cli(["fav"])  # seed a mapping first
+        with open(self.short_ids_path, "w") as f:
+            json.dump({"1": {"list_id": "L1", "task_id": "t1"}}, f)
         os.remove(self.short_ids_path)
         self.run_cli(["lists"])
         self.assertFalse(os.path.exists(self.short_ids_path))
 
     def test_a_second_listing_overwrites_the_first_mapping(self):
-        self.run_cli(["fav"])
+        self._run_pretty(["fav"])
         first = self._read_mapping()
         self.assertIn("2", first)
-        self.run_cli(["list", "Home"])
+        self._run_pretty(["list", "Home"])
         second = self._read_mapping()
         self.assertNotIn("2", second)  # Home has exactly one task
 
-    def test_json_mode_still_writes_the_mapping(self):
-        self.run_cli(["fav", "--json"])
-        mapping = self._read_mapping()
-        self.assertIn("1", mapping)
-
     def test_empty_result_writes_an_empty_mapping(self):
-        self.run_cli(["search", "zzz"])
+        self._run_pretty(["search", "zzz"])
         self.assertEqual(self._read_mapping(), {})
 
     def test_pretty_output_shows_the_same_numbers_as_the_mapping(self):
-        # _CliCase.setUp sets NO_COLOR=1, which forces plain mode regardless
-        # of isatty() (render.pick_mode: `if not is_tty or no_color: PLAIN`)
-        # — and plain mode never shows numbers. Unset it here so a TTY
-        # stdout actually gets pretty mode, the only mode this test can
-        # observe numbering in.
-        os.environ.pop("NO_COLOR", None)
-        out_stream = _TTYStringIO()
-        err_stream = io.StringIO()
-        cli.run(["fav"], stdout=out_stream, stderr=err_stream)
-        out = out_stream.getvalue()
+        _, out, _ = self._run_pretty(["fav"])
         mapping = self._read_mapping()
         lines_with_1 = [ln for ln in out.splitlines() if ln.lstrip().startswith("1")]
         self.assertTrue(lines_with_1)
         self.assertIn("Buy milk", lines_with_1[0])  # mapping["1"] is t4
         self.assertEqual(mapping["1"]["task_id"], "t4")
+
+    def test_pretty_mode_listing_writes_the_mapping(self):
+        # Explicit companion to the three "does NOT write" tests below —
+        # confirms in one place that the *only* thing gating the write is
+        # pretty mode, not some other side effect of TTY-ness or --json.
+        self._run_pretty(["fav"])
+        self.assertTrue(os.path.exists(self.short_ids_path))
+        mapping = self._read_mapping()
+        self.assertIn("1", mapping)
+
+    def test_plain_mode_listing_does_not_touch_the_mapping_file(self):
+        # Numbers only ever print in pretty mode. Writing the mapping in
+        # plain mode would silently overwrite it with numbers the user
+        # never saw, potentially repointing a still-valid `done N` typed
+        # from an earlier pretty-mode listing at the wrong task.
+        seeded = {"1": {"list_id": "SEEDED", "task_id": "seeded-task"}}
+        with open(self.short_ids_path, "w") as f:
+            json.dump(seeded, f)
+
+        # _CliCase.setUp already sets NO_COLOR=1 and run_cli uses a plain
+        # (non-TTY) io.StringIO, so this listing renders in plain mode.
+        code, out, _ = self.run_cli(["fav"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Ship CLI", out)
+        self.assertEqual(self._read_mapping(), seeded)
+
+    def test_json_mode_listing_does_not_touch_the_mapping_file(self):
+        seeded = {"1": {"list_id": "SEEDED", "task_id": "seeded-task"}}
+        with open(self.short_ids_path, "w") as f:
+            json.dump(seeded, f)
+
+        code, out, _ = self.run_cli(["fav", "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertTrue(out)
+        self.assertEqual(self._read_mapping(), seeded)
+
+    def test_tty_with_no_color_set_does_not_touch_the_mapping_file(self):
+        # A TTY stdout alone isn't enough to trigger pretty mode — NO_COLOR
+        # forces plain per render.pick_mode, and _CliCase.setUp already
+        # sets it. Numbers never print here either, so the mapping must be
+        # left untouched even though stdout reports itself as a terminal.
+        seeded = {"1": {"list_id": "SEEDED", "task_id": "seeded-task"}}
+        with open(self.short_ids_path, "w") as f:
+            json.dump(seeded, f)
+
+        out_stream = _TTYStringIO()
+        err_stream = io.StringIO()
+        code = cli.run(["fav"], stdout=out_stream, stderr=err_stream)
+
+        self.assertEqual(code, 0)
+        self.assertIn("Ship CLI", out_stream.getvalue())
+        self.assertEqual(self._read_mapping(), seeded)
+
+
+class TestShortIdMappingWriteFailure(_CliCase):
+    """shortids.write() has no built-in guard against an unwritable mapping
+    file — cli.py must catch the failure itself so a previously-safe,
+    read-only listing verb never crashes with a raw traceback just because
+    the follow-up mapping write failed."""
+
+    def test_write_failure_is_a_warning_not_a_crash(self):
+        import tasks_tui.shortids as shortids_module
+
+        def failing_write(_mapping):
+            raise OSError("permission denied")
+
+        original_write = shortids_module.write
+        shortids_module.write = failing_write
+        self.addCleanup(setattr, shortids_module, "write", original_write)
+
+        os.environ.pop("NO_COLOR", None)
+        out_stream = _TTYStringIO()
+        err_stream = io.StringIO()
+        code = cli.run(["fav"], stdout=out_stream, stderr=err_stream)
+        out, err = out_stream.getvalue(), err_stream.getvalue()
+
+        self.assertEqual(code, 0)
+        self.assertIn("Ship CLI", out)
+        self.assertIn("Buy milk", out)
+        self.assertTrue(err.strip())
+        self.assertNotIn("Traceback", out)
+        self.assertNotIn("Traceback", err)
 
 
 class _FakeGoogleReq:
