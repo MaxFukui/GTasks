@@ -686,6 +686,41 @@ class TestDoneSyncFailure(_DoneCase):
             on_disk = json.load(f)
         self.assertEqual(on_disk["tasks"]["L1"][0]["status"], "completed")
 
+    def test_local_save_also_failing_does_not_claim_success(self):
+        # local_storage.save_data() swallows IOError and historically
+        # returned None either way, so _verb_done's failure branch could
+        # not tell a persisted toggle from a lost one and always printed
+        # "done locally". Monkeypatching save_data() to report failure
+        # (simpler and more reliable across CI than relying on real
+        # filesystem permission failures) exercises that branch directly.
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService(
+            {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]},
+            fail_patch=True,
+        )
+        self._install_fake_task_service(data, google)
+        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+
+        import tasks_tui.local_storage as local_storage_module
+
+        original_save_data = local_storage_module.save_data
+        local_storage_module.save_data = lambda _data: False
+        self.addCleanup(
+            setattr, local_storage_module, "save_data", original_save_data
+        )
+
+        code, out, err = self.run_cli(["done", "1"])
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("done locally", out)
+        self.assertNotIn("it will push next time you open the TUI", err)
+        self.assertIn("could not save locally", err)
+
 
 class TestDoneConstructionFailure(_DoneCase):
     def test_task_service_construction_failure_exits_1(self):

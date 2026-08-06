@@ -45,14 +45,21 @@ def load_data():
 
 
 def save_data(data):
-    """Saves task data to the local JSON storage file."""
+    """Saves task data to the local JSON storage file.
+
+    Returns True if the write reached disk, False if it failed (e.g.
+    permissions, full disk, unwritable parent) — callers that need to know
+    whether the save actually persisted (TaskService.save_local_data) rely
+    on this instead of assuming success.
+    """
     _ensure_dir_exists()
     try:
         with open(cache_path(), "w") as f:
             json.dump(data, f, indent=4)
     except IOError:
         # Handle cases where the file cannot be written
-        pass
+        return False
+    return True
 
 
 def load_config():

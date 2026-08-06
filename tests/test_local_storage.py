@@ -54,6 +54,27 @@ class TestSaveDataHonorsOverride(_CacheOverrideCase):
         self.assertEqual(local_storage.load_data(), payload)
 
 
+class TestSaveDataReturnValue(_CacheOverrideCase):
+    """save_data() must tell the caller whether the write actually reached
+    disk, so TaskService.save_local_data() can avoid claiming success when
+    the local write also failed (e.g. after a sync failure)."""
+
+    def test_returns_true_on_a_successful_write(self):
+        result = local_storage.save_data({"task_lists": [], "tasks": {}})
+        self.assertTrue(result)
+
+    def test_returns_false_when_the_write_raises(self):
+        # Point the override at a path whose parent directory does not
+        # exist — open(..., "w") raises FileNotFoundError, a subclass of
+        # OSError/IOError, which save_data() must catch and report via its
+        # return value instead of silently swallowing.
+        os.environ["GTASK_CACHE_FILE"] = os.path.join(
+            tempfile.mkdtemp(), "no-such-dir", "cache.json"
+        )
+        result = local_storage.save_data({"task_lists": [], "tasks": {}})
+        self.assertFalse(result)
+
+
 class TestShortIdsPath(unittest.TestCase):
     def setUp(self):
         self.addCleanup(os.environ.pop, "GTASK_SHORT_IDS_FILE", None)

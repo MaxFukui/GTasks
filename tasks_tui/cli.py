@@ -245,10 +245,20 @@ def _verb_done(number, stdout, stderr):
     try:
         service.sync_to_google()
     except Exception as exc:
-        service.save_local_data()
-        print(f'✓ marked "{title}" done locally', file=stdout)
-        print(f"✗ could not reach Google: {exc}", file=stderr)
-        print("  it will push next time you open the TUI", file=stderr)
+        saved_locally = service.save_local_data()
+        if saved_locally:
+            print(f'✓ marked "{title}" done locally', file=stdout)
+            print(f"✗ could not reach Google: {exc}", file=stderr)
+            print("  it will push next time you open the TUI", file=stderr)
+        else:
+            # local_storage.save_data() swallows IOError, so the toggle
+            # made it neither to Google nor to disk — nothing is pending
+            # anywhere, so the "it will push next time" guidance would be
+            # actively wrong here.
+            print(
+                f"✗ could not save locally or reach Google: {exc}",
+                file=stderr,
+            )
         return EXIT_ERROR
 
     print(f'✓ marked "{title}" done — synced', file=stdout)

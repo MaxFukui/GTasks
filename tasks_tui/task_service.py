@@ -59,9 +59,16 @@ class TaskService:
         self.save_local_data()
 
     def save_local_data(self):
-        """Saves the current in-memory data to the local storage."""
-        local_storage.save_data(self.data)
-        self.dirty = False
+        """Saves the current in-memory data to the local storage.
+
+        Returns True if the save reached disk, False otherwise. dirty is
+        only cleared on success — if the write failed, the in-memory data
+        is still unsaved, so dirty must stay True.
+        """
+        saved = local_storage.save_data(self.data)
+        if saved:
+            self.dirty = False
+        return saved
 
     def get_task_lists(self, list_order=None):
         """Fetches all available task lists from the local cache."""
