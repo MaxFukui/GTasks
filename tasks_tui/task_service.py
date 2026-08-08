@@ -275,7 +275,11 @@ class TaskService:
         return None
 
     def get_starred_tasks(self):
-        """Returns list of (list_id, task) for all non-deleted, non-child starred tasks."""
+        """Returns list of (list_id, task) for all non-deleted starred tasks.
+
+        Subtasks are included — starring is title-prefix based and works on
+        any task, so the Favorites / starred views must surface children too.
+        """
         return queries.starred_tasks(self.data)
 
     def rename_task(self, list_id, task_id, new_name):

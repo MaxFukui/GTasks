@@ -29,6 +29,10 @@ def _cache():
                  "parent": "t1"},
                 {"id": "t4", "title": "Gone", "status": "needsAction",
                  "deleted": True},
+                {"id": "t6", "title": "⭐Starred child", "status": "needsAction",
+                 "parent": "t1"},
+                {"id": "t7", "title": "⭐Deleted child", "status": "needsAction",
+                 "parent": "t1", "deleted": True},
             ],
             "L2": [
                 {"id": "t5", "title": "⭐Buy milk", "status": "needsAction"},
@@ -90,7 +94,8 @@ class TestTasksForList(unittest.TestCase):
 class TestSubtasks(unittest.TestCase):
     def test_returns_children_of_parent(self):
         ids = [t["id"] for t in queries.subtasks(_cache(), "L1", "t1")]
-        self.assertEqual(ids, ["t3"])
+        # t3 and t6 are live children; deleted t7 is excluded.
+        self.assertEqual(ids, ["t3", "t6"])
 
     def test_returns_empty_for_childless_parent(self):
         self.assertEqual(queries.subtasks(_cache(), "L1", "t2"), [])
@@ -99,7 +104,7 @@ class TestSubtasks(unittest.TestCase):
 class TestAllTasksForList(unittest.TestCase):
     def test_includes_subtasks_but_not_deleted(self):
         ids = [t["id"] for t in queries.all_tasks_for_list(_cache(), "L1")]
-        self.assertEqual(ids, ["t1", "t2", "t3"])
+        self.assertEqual(ids, ["t1", "t2", "t3", "t6"])
 
 
 class TestStarredTasks(unittest.TestCase):
@@ -107,12 +112,49 @@ class TestStarredTasks(unittest.TestCase):
         pairs = queries.starred_tasks(_cache())
         self.assertEqual(
             sorted((lid, t["id"]) for lid, t in pairs),
-            [("L1", "t1"), ("L2", "t5")],
+            [("L1", "t1"), ("L1", "t6"), ("L2", "t5")],
         )
 
     def test_excludes_unstarred(self):
         ids = [t["id"] for _, t in queries.starred_tasks(_cache())]
         self.assertNotIn("t2", ids)
+
+    def test_includes_starred_subtasks(self):
+        ids = [t["id"] for _, t in queries.starred_tasks(_cache())]
+        self.assertIn("t6", ids)
+
+    def test_excludes_unstarred_subtasks(self):
+        ids = [t["id"] for _, t in queries.starred_tasks(_cache())]
+        self.assertNotIn("t3", ids)
+
+    def test_excludes_deleted_starred_subtasks(self):
+        ids = [t["id"] for _, t in queries.starred_tasks(_cache())]
+        self.assertNotIn("t7", ids)
+
+
+class TestParentDisplayTitle(unittest.TestCase):
+    def test_returns_parent_display_title_for_subtask(self):
+        task = {"id": "t6", "title": "⭐Starred child", "parent": "t1"}
+        self.assertEqual(
+            queries.parent_display_title(_cache(), "L1", task), "Ship CLI"
+        )
+
+    def test_returns_none_for_top_level_task(self):
+        task = {"id": "t1", "title": "⭐Ship CLI"}
+        self.assertIsNone(queries.parent_display_title(_cache(), "L1", task))
+
+    def test_returns_none_when_parent_missing(self):
+        task = {"id": "x", "title": "orphan", "parent": "nope"}
+        self.assertIsNone(queries.parent_display_title(_cache(), "L1", task))
+
+    def test_with_parent_context_appends_separator(self):
+        self.assertEqual(
+            queries.with_parent_context("child", "parent"),
+            "child  ·  parent",
+        )
+
+    def test_with_parent_context_leaves_title_alone_without_parent(self):
+        self.assertEqual(queries.with_parent_context("child", None), "child")
 
 
 class TestWithoutCompleted(unittest.TestCase):

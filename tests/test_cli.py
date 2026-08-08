@@ -44,6 +44,10 @@ def _cache_dict():
                 {"id": "t2", "title": "Review PR", "status": "completed"},
                 {"id": "t3", "title": "Old thing", "status": "needsAction",
                  "due": f"{yesterday}T00:00:00.000Z"},
+                {"id": "t5", "title": "⭐Write tests", "status": "needsAction",
+                 "parent": "t1"},
+                {"id": "t6", "title": "Unstarred child", "status": "needsAction",
+                 "parent": "t1"},
             ],
             "L2": [
                 {"id": "t4", "title": "⭐Buy milk", "status": "needsAction",
@@ -99,6 +103,21 @@ class TestFav(_CliCase):
         _, out, _ = self.run_cli(["fav", "-l", "Home"])
         self.assertIn("Buy milk", out)
         self.assertNotIn("Ship CLI", out)
+
+    def test_includes_starred_subtasks_with_parent_context(self):
+        _, out, _ = self.run_cli(["fav"])
+        self.assertIn("Write tests  ·  Ship CLI", out)
+
+    def test_excludes_unstarred_subtasks(self):
+        _, out, _ = self.run_cli(["fav"])
+        self.assertNotIn("Unstarred child", out)
+
+    def test_starred_subtask_stays_under_its_real_list(self):
+        _, out, _ = self.run_cli(["fav"])
+        # Plain mode (non-TTY) labels each row with (ListName).
+        child_line = next(ln for ln in out.splitlines() if "Write tests" in ln)
+        self.assertIn("(Work)", child_line)
+        self.assertNotIn("(Home)", child_line)
 
 
 class TestLists(_CliCase):
@@ -420,17 +439,22 @@ class TestShortIdMapping(_CliCase):
     def test_fav_writes_a_mapping_for_every_printed_task(self):
         self._run_pretty(["fav"])
         mapping = self._read_mapping()
-        # _cache_dict()'s starred tasks are t1 (Work) and t4 (Home); fav
-        # groups and sorts by list_title, so Home (t4) sorts before Work
-        # (t1) alphabetically.
+        # Starred: t4 (Home), t1 (Work), t5 (Work subtask). fav groups and
+        # sorts by list_title, so Home sorts before Work alphabetically;
+        # within Work, cache order keeps the parent (t1) ahead of its
+        # starred child (t5).
         self.assertEqual(mapping["1"], {"list_id": "L2", "task_id": "t4"})
         self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t1"})
+        self.assertEqual(mapping["3"], {"list_id": "L1", "task_id": "t5"})
 
     def test_list_verb_writes_a_mapping_in_parent_child_order(self):
         self._run_pretty(["list", "Work"])
         mapping = self._read_mapping()
+        # Parent t1, then its children t5/t6, then sibling top-level t3.
         self.assertEqual(mapping["1"], {"list_id": "L1", "task_id": "t1"})
-        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t3"})
+        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t5"})
+        self.assertEqual(mapping["3"], {"list_id": "L1", "task_id": "t6"})
+        self.assertEqual(mapping["4"], {"list_id": "L1", "task_id": "t3"})
 
     def test_lists_verb_does_not_write_a_mapping(self):
         with open(self.short_ids_path, "w") as f:

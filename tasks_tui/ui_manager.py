@@ -408,6 +408,10 @@ class UIManager:
 
         for idx, task in enumerate(tasks):
             task_title = display_title(task)  # Strip ⭐ from display
+            # Favorites / starred views tag subtasks with their parent so the
+            # row reads `child  ·  parent` instead of an orphaned child title.
+            if task.get("_parent_title"):
+                task_title = f"{task_title}  ·  {task['_parent_title']}"
             starred = is_starred(task)
             status = task.get("status", "needsAction")
             is_selected = self.active_panel == "tasks" and idx == self.selected_task_idx

@@ -121,21 +121,38 @@ class AppState:
         }
         return [favorites_list] + regular_lists
 
+    def _annotate_starred_task(self, list_id, task, list_title=None):
+        """Copy of a starred task tagged with list + optional parent context.
+
+        Parent context (`_parent_title`) lets Favorites / starred views show
+        `child  ·  parent` so a starred subtask is not ambiguous.
+        """
+        task_copy = task.copy()
+        task_copy["_list_id"] = list_id
+        if list_title is not None:
+            task_copy["_list_title"] = list_title
+        parent_id = task.get("parent")
+        if parent_id:
+            parent = self.service.get_task(list_id, parent_id)
+            if parent:
+                task_copy["_parent_title"] = display_title(parent)
+        return task_copy
+
     def get_favorite_tasks(self):
-        """Returns all starred tasks from all lists for the Favorites view."""
+        """Returns all starred tasks (subtasks included) for the Favorites view."""
+        list_titles = {
+            task_list["id"]: task_list.get("title", "Untitled")
+            for task_list in self.service.get_task_lists(self.list_order)
+        }
         favorite_tasks = []
-        for task_list in self.service.get_task_lists(self.list_order):
-            list_id = task_list["id"]
-            tasks = self.service.get_tasks_for_list(list_id)
-            for task in tasks:
-                if not is_starred(task):
-                    continue
-                if self.hide_completed and task.get("status") == "completed":
-                    continue
-                task_copy = task.copy()
-                task_copy["_list_id"] = list_id
-                task_copy["_list_title"] = task_list.get("title", "Untitled")
-                favorite_tasks.append(task_copy)
+        for list_id, task in self.service.get_starred_tasks():
+            if self.hide_completed and task.get("status") == "completed":
+                continue
+            favorite_tasks.append(
+                self._annotate_starred_task(
+                    list_id, task, list_titles.get(list_id, "Untitled")
+                )
+            )
         return favorite_tasks
 
     def get_all_tasks_global(self):
@@ -217,9 +234,11 @@ class AppState:
                 starred = [
                     (lid, t) for lid, t in starred if t.get("status") != "completed"
                 ]
+            result = []
             for list_id, task in starred:
                 self.starred_list_context[task["id"]] = list_id
-            return [task for _, task in starred]
+                result.append(self._annotate_starred_task(list_id, task))
+            return result
 
         if self.current_parent_task_id:
             tasks = self.service.get_subtasks(

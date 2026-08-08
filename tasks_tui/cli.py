@@ -124,12 +124,23 @@ def _scope(data, args):
     return queries.all_tasks_global(data)
 
 
-def _rows(tasks, include_completed):
+def _rows(tasks, include_completed, data=None, parent_context=False):
+    """Build renderer rows. When parent_context is set (fav), starred
+    subtasks get `title  ·  parent` so they are not ambiguous when printed
+    flat across lists.
+    """
     if not include_completed:
         tasks = queries.without_completed(tasks)
-    return [
-        queries.to_row(task, task.get("_list_title", "")) for task in tasks
-    ]
+    rows = []
+    for task in tasks:
+        row = queries.to_row(task, task.get("_list_title", ""))
+        if parent_context and data is not None:
+            parent_title = queries.parent_display_title(
+                data, task.get("_list_id"), task
+            )
+            row["title"] = queries.with_parent_context(row["title"], parent_title)
+        rows.append(row)
+    return rows
 
 
 def _list_rows(data, list_id, title, include_completed):
@@ -327,7 +338,12 @@ def run(argv, stdout=None, stderr=None):
         tasks = queries.search(tasks, args.query)
 
     if args.verb != "list":
-        rows = _rows(tasks, include_completed=args.all)
+        rows = _rows(
+            tasks,
+            include_completed=args.all,
+            data=data,
+            parent_context=(args.verb == "fav"),
+        )
         if group:
             rows.sort(key=lambda row: row["list_title"])
 

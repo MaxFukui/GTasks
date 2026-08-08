@@ -82,17 +82,35 @@ def all_tasks_for_list(data, list_id):
 
 
 def starred_tasks(data):
-    """(list_id, task) for every non-deleted, top-level starred task."""
+    """(list_id, task) for every non-deleted starred task, subtasks included."""
     starred = []
     for list_id, tasks in data.get("tasks", {}).items():
         for task in tasks:
-            if (
-                not task.get("deleted")
-                and not task.get("parent")
-                and is_starred(task)
-            ):
+            if not task.get("deleted") and is_starred(task):
                 starred.append((list_id, task))
     return starred
+
+
+def parent_display_title(data, list_id, task):
+    """Display title of this task's parent, or None if top-level / missing.
+
+    Uses display_title so a starred parent does not leak a second star marker
+    into the child's "title · parent" label.
+    """
+    parent_id = task.get("parent")
+    if not parent_id or not list_id:
+        return None
+    for candidate in data.get("tasks", {}).get(list_id, []):
+        if candidate.get("id") == parent_id and not candidate.get("deleted"):
+            return display_title(candidate)
+    return None
+
+
+def with_parent_context(title, parent_title):
+    """Appends `  ·  {parent}` when a parent title is present."""
+    if parent_title:
+        return f"{title}  ·  {parent_title}"
+    return title
 
 
 def without_completed(tasks):
