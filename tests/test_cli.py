@@ -476,12 +476,13 @@ class _FakeGoogleReq:
 
 
 class _FakeGoogleTasks:
-    """Mimics service.tasks() for sync_to_google(): list() + patch()."""
+    """Mimics service.tasks() for sync_to_google(): list() + patch() + insert()."""
 
     def __init__(self, google_state, fail_patch=False):
         self._state = google_state  # {list_id: [task_dict, ...]}
         self.fail_patch = fail_patch
         self.patch_calls = []
+        self.insert_calls = []
 
     def list(self, tasklist, showHidden=True):
         return _FakeGoogleReq({"items": self._state.get(tasklist, [])})
@@ -491,6 +492,17 @@ class _FakeGoogleTasks:
         if self.fail_patch:
             return _FakeGoogleReq(error=RuntimeError("network down"))
         return _FakeGoogleReq({})
+
+    def insert(self, tasklist, body, parent=None):
+        self.insert_calls.append((tasklist, body, parent))
+        if self.fail_patch:
+            return _FakeGoogleReq(error=RuntimeError("network down"))
+        new_id = f"g{len(self.insert_calls)}"
+        created = dict(body, id=new_id)
+        if parent:
+            created["parent"] = parent
+        self._state.setdefault(tasklist, []).append(created)
+        return _FakeGoogleReq(created)
 
 
 class _FakeGoogleTasklists:
@@ -895,6 +907,148 @@ class TestDoneConstructionFailure(_DoneCase):
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
         self.assertIn("could not connect", err)
+
+
+class TestStarUnstar(_DoneCase):
+    def test_star_favorites_a_plain_task_and_syncs(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService(
+            {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]}
+        )
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["star", self._short("t1")])
+
+        self.assertEqual(code, 0)
+        self.assertIn('starred "Ship CLI"', out)
+        self.assertIn("synced", out)
+        self.assertTrue(data["tasks"]["L1"][0]["title"].startswith("⭐"))
+        self.assertEqual(len(google.tasks().patch_calls), 1)
+        self.assertIn("⭐", google.tasks().patch_calls[0][2]["title"])
+
+    def test_star_is_noop_when_already_starred(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "⭐Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["star", self._short("t1")])
+
+        self.assertEqual(code, 0)
+        self.assertIn("already starred", out)
+        self.assertEqual(len(google.tasks().patch_calls), 0)
+
+    def test_unstar_removes_favorite_and_syncs(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "⭐Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService(
+            {"L1": [{"id": "t1", "title": "⭐Ship CLI", "status": "needsAction"}]}
+        )
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["unstar", self._short("t1")])
+
+        self.assertEqual(code, 0)
+        self.assertIn('unstarred "Ship CLI"', out)
+        self.assertEqual(data["tasks"]["L1"][0]["title"], "Ship CLI")
+        self.assertEqual(google.tasks().patch_calls[0][2]["title"], "Ship CLI")
+
+    def test_unstar_is_noop_when_not_starred(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["unstar", self._short("t1")])
+
+        self.assertEqual(code, 0)
+        self.assertIn("is not starred", out)
+        self.assertEqual(len(google.tasks().patch_calls), 0)
+
+
+class TestAdd(_DoneCase):
+    def test_adds_task_to_named_list_and_syncs(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": []},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["add", "Work", "Ship", "the", "CLI"])
+
+        self.assertEqual(code, 0)
+        self.assertIn('added "Ship the CLI" to Work', out)
+        self.assertIn("synced", out)
+        self.assertEqual(len(google.tasks().insert_calls), 1)
+        _list, body, parent = google.tasks().insert_calls[0]
+        self.assertEqual(_list, "L1")
+        self.assertEqual(body["title"], "Ship the CLI")
+        self.assertIsNone(parent)
+        # Local cache holds the Google id after sync.
+        self.assertEqual(data["tasks"]["L1"][0]["title"], "Ship the CLI")
+        self.assertFalse(data["tasks"]["L1"][0]["id"].startswith("temp_"))
+
+    def test_add_with_star_flag_prefixes_marker(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": []},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["add", "-s", "Work", "Important"])
+
+        self.assertEqual(code, 0)
+        self.assertIn('added "Important" to Work', out)
+        self.assertEqual(google.tasks().insert_calls[0][1]["title"], "⭐Important")
+
+    def test_add_unknown_list_exits_2(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": []},
+        }
+        self._seed_cache(data)
+        code, out, err = self.run_cli(["add", "Nope", "Task"])
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("no list matches", err)
+
+    def test_add_partial_list_name_resolves(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": []},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["add", "Wo", "Hello"])
+        self.assertEqual(code, 0)
+        self.assertIn("Work", out)
 
 
 if __name__ == "__main__":

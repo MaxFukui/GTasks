@@ -274,6 +274,19 @@ class TaskService:
                 return task
         return None
 
+    def set_starred(self, list_id, task_id, starred):
+        """Ensures a task is starred or unstarred. No-op if already there.
+
+        Returns the task dict, or None if the task/list is missing. `dirty`
+        is only set when the title actually changes.
+        """
+        task = self.get_task(list_id, task_id)
+        if task is None or task.get("deleted"):
+            return None
+        if is_starred(task) == bool(starred):
+            return task
+        return self.toggle_star(list_id, task_id)
+
     def get_starred_tasks(self):
         """Returns list of (list_id, task) for all non-deleted starred tasks.
 

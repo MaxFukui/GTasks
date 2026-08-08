@@ -117,7 +117,11 @@ tasks-tui today            # due today
 tasks-tui overdue          # past due, not done
 tasks-tui search milk      # match title or notes
 tasks-tui sync             # pull fresh data from Google
-tasks-tui done a3f1         # mark task done by its short id and push to Google
+tasks-tui done a3f1        # mark task done by its short id and push to Google
+tasks-tui star a3f1        # favorite a task (shows up in fav)
+tasks-tui unstar a3f1      # remove from favorites
+tasks-tui add Work "Title" # create a task in a list (partial list names ok)
+tasks-tui add -s Work Buy milk   # create already favorited
 ```
 
 Flags: `-a` (include completed), `--json` (machine-readable), `-q` (hide staleness).
@@ -149,6 +153,11 @@ Running `done` on a task that's already done is a safe no-op — it prints
 `"<title>" is already done` and does not touch Google. Short ids do not
 require re-running a listing first; any task still in the local cache can
 be addressed directly.
+
+`star` / `unstar` use the same short ids and are also no-ops when the task
+is already in the desired state. `add` resolves the list name the same way
+`list` does, joins the remaining words into the title, pushes to Google,
+and prints the new short id when the temp id is replaced after sync.
 
 Completed tasks are hidden by default, independent of the TUI's
 `hide_completed` setting. Output drops colour automatically when piped, and
