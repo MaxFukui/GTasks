@@ -120,8 +120,10 @@ tasks-tui sync             # pull fresh data from Google
 tasks-tui done a3f1        # mark task done by its short id and push to Google
 tasks-tui star a3f1        # favorite a task (shows up in fav)
 tasks-tui unstar a3f1      # remove from favorites
-tasks-tui add Work "Title" # create a task in a list (partial list names ok)
+tasks-tui add Work "Title"       # create a top-level task (partial list names ok)
 tasks-tui add -s Work Buy milk   # create already favorited
+tasks-tui add -p a3f1 "Child"    # subtask under short id a3f1 (list inferred)
+tasks-tui subadd a3f1 "Child"    # same as add -p (parent-first spelling)
 ```
 
 Flags: `-a` (include completed), `--json` (machine-readable), `-q` (hide staleness).
@@ -155,9 +157,11 @@ require re-running a listing first; any task still in the local cache can
 be addressed directly.
 
 `star` / `unstar` use the same short ids and are also no-ops when the task
-is already in the desired state. `add` resolves the list name the same way
-`list` does, joins the remaining words into the title, pushes to Google,
-and prints the new short id when the temp id is replaced after sync.
+is already in the desired state. `add` creates tasks: classic form is
+`add LIST TITLE...`; with `-p SHORT` (or `subadd SHORT TITLE...`) it creates
+a subtask under that parent (list inferred from the parent; Google allows
+only one nesting level). `-s` favorites on create. After sync, a new short
+id is printed when the temporary id is replaced.
 
 Completed tasks are hidden by default, independent of the TUI's
 `hide_completed` setting. Output drops colour automatically when piped, and

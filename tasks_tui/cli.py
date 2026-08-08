@@ -102,20 +102,45 @@ def _build_parser():
     unstar_verb.add_argument("short_id", help=short_id_help)
 
     add_verb = subparsers.add_parser(
-        "add", help="create a task in a list and push it to Google"
+        "add",
+        help="create a task (top-level or subtask with -p) and push",
     )
     add_verb.add_argument(
-        "list_name",
-        help="list to add to (partial names allowed, same as `list`)",
-    )
-    add_verb.add_argument(
-        "title",
+        "words",
         nargs="+",
-        help="task title (words are joined with spaces)",
+        metavar="WORD",
+        help=(
+            "without -l/-p: LIST TITLE... ; "
+            "with -l and/or -p: TITLE... only"
+        ),
+    )
+    add_verb.add_argument(
+        "-l", "--list", dest="list_name", metavar="NAME",
+        help="list to add to (partial names allowed); optional with -p",
+    )
+    add_verb.add_argument(
+        "-p", "--parent", dest="parent_short", metavar="SHORT",
+        help="short id of the parent task (creates a subtask)",
     )
     add_verb.add_argument(
         "-s", "--star", action="store_true", dest="star_new",
         help="also favorite the new task",
+    )
+
+    # Thin sugar over `add -p`: parent first, then title — same code path.
+    subadd_verb = subparsers.add_parser(
+        "subadd",
+        help="create a subtask under a parent short id and push",
+    )
+    subadd_verb.add_argument("parent_short", help=short_id_help)
+    subadd_verb.add_argument(
+        "title",
+        nargs="+",
+        help="subtask title (words are joined with spaces)",
+    )
+    subadd_verb.add_argument(
+        "-s", "--star", action="store_true", dest="star_new",
+        help="also favorite the new subtask",
     )
 
     return parser
@@ -447,8 +472,39 @@ def _verb_star(raw_token, want_starred, stdout, stderr, stdin=None):
     return _push_or_save_local(service, phrase, stdout, stderr)
 
 
-def _verb_add(list_name, title_words, star_new, stdout, stderr):
-    """Create a task in a named list and push it to Google."""
+def _verb_add(
+    words,
+    list_name,
+    parent_short,
+    star_new,
+    stdout,
+    stderr,
+    stdin=None,
+):
+    """Create a top-level task or subtask and push it to Google.
+
+    Title/list parsing:
+      - with -p and/or -l: every positional word is the title
+      - classic: first word is the list name, the rest is the title
+
+    `subadd PARENT TITLE...` is sugar that only sets parent_short + words.
+    """
+    words = list(words or [])
+    if parent_short or list_name:
+        title_words = words
+        classic_list = list_name
+    else:
+        if len(words) < 2:
+            print(
+                "error: usage: add LIST TITLE...  "
+                "or  add TITLE... -p SHORT  "
+                "or  subadd SHORT TITLE...",
+                file=stderr,
+            )
+            return EXIT_USAGE
+        classic_list = words[0]
+        title_words = words[1:]
+
     title = " ".join(title_words).strip()
     if not title:
         print("error: title must not be empty", file=stderr)
@@ -458,28 +514,86 @@ def _verb_add(list_name, title_words, star_new, stdout, stderr):
     if data is None:
         return EXIT_ERROR
 
-    try:
-        target = queries.resolve_list_name(data, list_name)
-    except queries.ListResolutionError as exc:
-        message = exc.message
-        if exc.candidates:
-            message = f"{message}: {', '.join(exc.candidates)}"
-        print(f"error: {message}", file=stderr)
-        return EXIT_USAGE
+    parent_id = None
+    parent_title = None
+    list_id = None
+    list_title = None
 
-    list_id = target["id"]
-    list_title = target.get("title", "Untitled")
+    if parent_short:
+        resolved, code = _resolve_short_id(
+            parent_short, stdout, stderr, stdin=stdin
+        )
+        if resolved is None:
+            return code
+        parent_list_id, parent_task, _ = resolved
+        if parent_task.get("parent"):
+            print(
+                "error: cannot nest under a subtask "
+                "(Google Tasks allows only one level)",
+                file=stderr,
+            )
+            return EXIT_USAGE
+        parent_id = parent_task.get("id")
+        parent_title = queries.display_title(parent_task)
+        list_id = parent_list_id
+        list_title = _list_title_for(data, list_id)
+
+        if classic_list:
+            try:
+                wanted = queries.resolve_list_name(data, classic_list)
+            except queries.ListResolutionError as exc:
+                message = exc.message
+                if exc.candidates:
+                    message = f"{message}: {', '.join(exc.candidates)}"
+                print(f"error: {message}", file=stderr)
+                return EXIT_USAGE
+            if wanted["id"] != list_id:
+                print(
+                    f"error: parent is in {list_title}, not "
+                    f"{wanted.get('title', classic_list)}",
+                    file=stderr,
+                )
+                return EXIT_USAGE
+    else:
+        try:
+            target = queries.resolve_list_name(data, classic_list)
+        except queries.ListResolutionError as exc:
+            message = exc.message
+            if exc.candidates:
+                message = f"{message}: {', '.join(exc.candidates)}"
+            print(f"error: {message}", file=stderr)
+            return EXIT_USAGE
+        list_id = target["id"]
+        list_title = target.get("title", "Untitled")
 
     service, err = _connect_service(stderr)
     if service is None:
         return err
 
-    # Prefer the service's live list table in case the on-disk snapshot is
+    # Prefer the service's live tables in case the on-disk snapshot is
     # slightly behind what TaskService just loaded.
     live_lists = {lst["id"]: lst for lst in service.get_task_lists()}
     if list_id not in live_lists or live_lists[list_id].get("deleted"):
-        print(f"error: list '{list_name}' no longer exists", file=stderr)
+        print(f"error: list '{list_title}' no longer exists", file=stderr)
         return EXIT_USAGE
+
+    if parent_id is not None:
+        live_parent = service.get_task(list_id, parent_id)
+        if live_parent is None or live_parent.get("deleted"):
+            print(
+                "error: parent task no longer exists; "
+                "run sync or a listing again",
+                file=stderr,
+            )
+            return EXIT_USAGE
+        if live_parent.get("parent"):
+            print(
+                "error: cannot nest under a subtask "
+                "(Google Tasks allows only one level)",
+                file=stderr,
+            )
+            return EXIT_USAGE
+        parent_title = queries.display_title(live_parent)
 
     new_title = title
     if star_new:
@@ -488,14 +602,17 @@ def _verb_add(list_name, title_words, star_new, stdout, stderr):
         if not new_title.startswith(STAR_MARKER):
             new_title = STAR_MARKER + new_title
 
-    task = service.add_task(list_id, new_title)
+    task = service.add_task(list_id, new_title, parent=parent_id)
     if task is None:
         print("error: could not create task", file=stderr)
         return EXIT_ERROR
 
     display = queries.display_title(task)
     handle = shortids.short_id(task.get("id"))
-    phrase = f'added "{display}" to {list_title}'
+    if parent_title:
+        phrase = f'added "{display}" under "{parent_title}" in {list_title}'
+    else:
+        phrase = f'added "{display}" to {list_title}'
     if handle:
         # temp_ ids still get a short handle so the user can star/done them
         # immediately from the local cache before the next listing.
@@ -507,7 +624,11 @@ def _verb_add(list_name, title_words, star_new, stdout, stderr):
         # stable short so `done`/`star` work without re-listing if possible.
         live = None
         for t in service.data.get("tasks", {}).get(list_id, []):
-            if queries.display_title(t) == display and not t.get("deleted"):
+            if (
+                queries.display_title(t) == display
+                and not t.get("deleted")
+                and t.get("parent") == parent_id
+            ):
                 live = t
         if live is not None:
             new_handle = shortids.short_id(live.get("id"))
@@ -546,7 +667,22 @@ def run(argv, stdout=None, stderr=None):
 
     if args.verb == "add":
         return _verb_add(
-            args.list_name, args.title, args.star_new, stdout, stderr
+            args.words,
+            getattr(args, "list_name", None),
+            getattr(args, "parent_short", None),
+            args.star_new,
+            stdout,
+            stderr,
+        )
+
+    if args.verb == "subadd":
+        return _verb_add(
+            args.title,
+            list_name=None,
+            parent_short=args.parent_short,
+            star_new=args.star_new,
+            stdout=stdout,
+            stderr=stderr,
         )
 
     data, path = _load_cache(stderr)

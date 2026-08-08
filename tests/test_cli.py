@@ -1050,6 +1050,97 @@ class TestAdd(_DoneCase):
         self.assertEqual(code, 0)
         self.assertIn("Work", out)
 
+    def test_add_dash_p_creates_subtask_under_parent(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "p1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [{"id": "p1", "title": "Ship CLI", "status": "needsAction"}],
+        })
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(
+            ["add", "-p", self._short("p1"), "Write", "tests"]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn('added "Write tests" under "Ship CLI" in Work', out)
+        _list, body, parent = google.tasks().insert_calls[0]
+        self.assertEqual(_list, "L1")
+        self.assertEqual(body["title"], "Write tests")
+        self.assertEqual(parent, "p1")
+        child = next(t for t in data["tasks"]["L1"] if t["title"] == "Write tests")
+        self.assertEqual(child.get("parent"), "p1")
+
+    def test_subadd_is_sugar_for_add_dash_p(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "p1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [{"id": "p1", "title": "Ship CLI", "status": "needsAction"}],
+        })
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(
+            ["subadd", self._short("p1"), "Child", "task"]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn('under "Ship CLI"', out)
+        self.assertEqual(google.tasks().insert_calls[0][2], "p1")
+
+    def test_cannot_nest_under_a_subtask(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "p1", "title": "Parent", "status": "needsAction"},
+                {"id": "c1", "title": "Child", "status": "needsAction",
+                 "parent": "p1"},
+            ]},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, err = self.run_cli(
+            ["subadd", self._short("c1"), "Grandchild"]
+        )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("cannot nest under a subtask", err)
+        self.assertEqual(len(google.tasks().insert_calls), 0)
+
+    def test_add_dash_p_with_wrong_list_exits_2(self):
+        data = {
+            "task_lists": [
+                {"id": "L1", "title": "Work"},
+                {"id": "L2", "title": "Home"},
+            ],
+            "tasks": {
+                "L1": [
+                    {"id": "p1", "title": "Ship CLI", "status": "needsAction"},
+                ],
+                "L2": [],
+            },
+        }
+        self._seed_cache(data)
+
+        code, out, err = self.run_cli(
+            ["add", "-l", "Home", "-p", self._short("p1"), "Nope"]
+        )
+
+        self.assertEqual(code, 2)
+        self.assertIn("parent is in Work, not Home", err)
+
 
 if __name__ == "__main__":
     unittest.main()
