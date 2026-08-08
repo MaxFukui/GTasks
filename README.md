@@ -117,6 +117,7 @@ tasks-tui today            # due today
 tasks-tui overdue          # past due, not done
 tasks-tui search milk      # match title or notes
 tasks-tui sync             # pull fresh data from Google
+tasks-tui done N            # mark task N done (number from the last listing) and push to Google
 ```
 
 Flags: `-a` (include completed), `--json` (machine-readable), `-q` (hide staleness).
@@ -124,6 +125,27 @@ On `fav`, `today`, `overdue`, and `search`, add `-l NAME` to restrict to one lis
 
 Without a local cache, exits 1 with the message: `no local cache; run 'tasks-tui sync' or launch the TUI first`.
 Exit codes: 0 (success), 1 (runtime error), 2 (usage error).
+
+`fav`, `list`, `today`, `overdue`, and `search` number each task in
+their pretty-mode output (not in piped/plain or `--json` output — those
+are unchanged). `tasks-tui done N` marks that task done and pushes the
+change to Google before it returns. The number is only valid until the
+next listing command overwrites it — run a listing command, then `done`
+right after, don't reuse an old number.
+
+```
+$ tasks-tui fav
+Home
+1    ○ Buy milk
+Work
+2    ○ Ship CLI mode        due 2026-08-05
+
+$ tasks-tui done 2
+✓ marked "Ship CLI mode" done — synced
+```
+
+Running `done` on a task that's already done is a safe no-op — it prints
+`"<title>" is already done` and does not touch Google.
 
 Completed tasks are hidden by default, independent of the TUI's
 `hide_completed` setting. Output drops colour automatically when piped, and

@@ -10,6 +10,12 @@ on the CLI path, since importing it initializes terminal state.
 `render()` accepts an optional `today` to pin the overdue-red comparison in
 pretty mode; when the caller does not pass one, it defaults to the system
 date (`datetime.date.today()`).
+
+A row is prefixed with its number in pretty mode if and only if it already
+carries a `number` key — plain and JSON output never show it. `cli.py`
+assigns numbers when it writes the short-id mapping `done <N>` reads from;
+this module has no idea that mapping exists, it only prints what it's
+given.
 """
 
 import datetime
@@ -70,12 +76,17 @@ def _render_pretty(rows, group_by_list, today=None):
         return f"{_DIM}(nothing){_RESET}"
 
     today = today or datetime.date.today()
+    numbered = any(row.get("number") is not None for row in rows)
+    num_width = len(str(len(rows))) if numbered else 0
 
     def one(row):
+        prefix = ""
+        if numbered and row.get("number") is not None:
+            prefix = f"{row['number']:>{num_width}}  "
         indent = "  " + "  " * row["depth"]
         glyph = _DONE_GLYPH if row["done"] else _OPEN_GLYPH
         star = _STAR_GLYPH if row["starred"] and group_by_list is False else ""
-        text = f"{indent}{glyph} {star}{row['title']}"
+        text = f"{prefix}{indent}{glyph} {star}{row['title']}"
         due = row.get("due")
         if due:
             stamp = f"due {due.isoformat()}"

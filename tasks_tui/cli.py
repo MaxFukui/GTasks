@@ -15,6 +15,7 @@ from . import freshness
 from . import local_storage
 from . import queries
 from . import render
+from . import shortids
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -77,6 +78,14 @@ def _build_parser():
     search_verb.add_argument("query", help="text to look for")
 
     add_common(subparsers.add_parser("sync", help="pull from Google Tasks"))
+
+    done_verb = subparsers.add_parser(
+        "done", help="mark a task done and push it to Google"
+    )
+    done_verb.add_argument(
+        "number", type=int,
+        help="the number a listing command just printed next to the task",
+    )
 
     return parser
 
@@ -192,6 +201,70 @@ def _verb_sync(stdout, stderr):
     return EXIT_OK
 
 
+def _verb_done(number, stdout, stderr):
+    """Marks task `number` done and pushes it to Google before returning.
+
+    Needs credentials, so TaskService is imported here, same as
+    _verb_sync — never at module scope, so the CLI's read-only verbs never
+    pay for it and unicurses isolation is unaffected.
+    """
+    mapping = shortids.read()
+    entry = mapping.get(str(number)) if mapping else None
+    if (
+        not isinstance(entry, dict)
+        or "list_id" not in entry
+        or "task_id" not in entry
+    ):
+        print(
+            f"no task numbered {number}; run a list command first",
+            file=stderr,
+        )
+        return EXIT_USAGE
+    list_id, task_id = entry["list_id"], entry["task_id"]
+
+    from .task_service import TaskService
+
+    try:
+        service = TaskService()
+    except Exception as exc:
+        print(f"could not connect: {exc}", file=stderr)
+        return EXIT_ERROR
+
+    task = service.get_task(list_id, task_id)
+    if task is None or task.get("deleted"):
+        print("task no longer exists; run a list command again", file=stderr)
+        return EXIT_USAGE
+
+    title = queries.display_title(task)
+    if task.get("status") == "completed":
+        print(f'"{title}" is already done', file=stdout)
+        return EXIT_OK
+
+    service.toggle_task_status(list_id, task_id)
+
+    try:
+        service.sync_to_google()
+    except Exception as exc:
+        saved_locally = service.save_local_data()
+        if saved_locally:
+            print(f'✓ marked "{title}" done locally', file=stdout)
+            print(f"✗ could not reach Google: {exc}", file=stderr)
+            print("  it will push next time you open the TUI", file=stderr)
+        else:
+            # local_storage.save_data() swallows IOError, so the toggle
+            # made it neither to Google nor to disk — nothing is pending
+            # anywhere, so the "it will push next time" guidance would be
+            # actively wrong here.
+            print(
+                f"✗ could not save locally or reach Google: {exc}",
+                file=stderr,
+            )
+        return EXIT_ERROR
+
+    print(f'✓ marked "{title}" done — synced', file=stdout)
+    return EXIT_OK
+
+
 def run(argv, stdout=None, stderr=None):
     """Runs one CLI invocation. Returns an exit code; never calls sys.exit."""
     stdout = stdout or sys.stdout
@@ -210,6 +283,9 @@ def run(argv, stdout=None, stderr=None):
 
     if args.verb == "sync":
         return _verb_sync(stdout, stderr)
+
+    if args.verb == "done":
+        return _verb_done(args.number, stdout, stderr)
 
     data, path = _load_cache(stderr)
     if data is None:
@@ -255,5 +331,35 @@ def run(argv, stdout=None, stderr=None):
         if group:
             rows.sort(key=lambda row: row["list_title"])
 
+    # Numbers and the mapping come from this exact enumeration, in this
+    # exact order — the printed number and what `done <N>` acts on can
+    # never diverge, because both are derived from the same pass over the
+    # same finished row list.
+    mapping = {}
+    for i, row in enumerate(rows, start=1):
+        row["number"] = i
+        mapping[i] = {
+            "list_id": row["raw"].get("_list_id"),
+            "task_id": row["raw"].get("id"),
+        }
+
     text = render.render(rows, mode, group_by_list=group, sync_info=info)
-    return _emit(text, freshness.format_age(info), args, mode, stdout, stderr)
+    result = _emit(text, freshness.format_age(info), args, mode, stdout, stderr)
+
+    # Numbers only ever print in pretty mode (render.py's _render_pretty).
+    # Writing the mapping for a mode whose numbers were never shown would
+    # silently overwrite a still-valid mapping from an earlier pretty-mode
+    # listing, repointing a `done N` typed from memory at the wrong task.
+    if mode == render.PRETTY:
+        try:
+            shortids.write(mapping)
+        except OSError as exc:
+            # The query itself already succeeded and printed above — a
+            # failed follow-up mapping write must not crash an otherwise
+            # read-only, previously-safe listing verb with a raw traceback.
+            print(
+                f"warning: could not save the task numbers for 'done': {exc}",
+                file=stderr,
+            )
+
+    return result
