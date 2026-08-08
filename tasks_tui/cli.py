@@ -83,8 +83,11 @@ def _build_parser():
         "done", help="mark a task done and push it to Google"
     )
     done_verb.add_argument(
-        "number", type=int,
-        help="the number a listing command just printed next to the task",
+        "short_id",
+        help=(
+            "short id shown next to the task in a listing "
+            f"(at least {shortids.MIN_INPUT_LEN} hex chars; unique prefix ok)"
+        ),
     )
 
     return parser
@@ -212,26 +215,113 @@ def _verb_sync(stdout, stderr):
     return EXIT_OK
 
 
-def _verb_done(number, stdout, stderr):
-    """Marks task `number` done and pushes it to Google before returning.
+def _list_title_for(data, list_id):
+    for task_list in data.get("task_lists", []):
+        if task_list.get("id") == list_id:
+            return task_list.get("title", "Untitled")
+    return "Untitled"
+
+
+def _format_done_candidate(data, list_id, task):
+    """One line describing a match for an ambiguous `done` prompt."""
+    title = queries.display_title(task)
+    parent_title = queries.parent_display_title(data, list_id, task)
+    title = queries.with_parent_context(title, parent_title)
+    list_title = _list_title_for(data, list_id)
+    handle = shortids.short_id(task.get("id"))
+    return f"{handle}  {title}  ({list_title})"
+
+
+def _disambiguate(matches, token, data, stdout, stderr, stdin):
+    """Pick one match when a short id prefix hits more than one task.
+
+    Interactive TTY: numbered prompt on stderr, answer on stdin.
+    Non-interactive: print candidates and return None (caller exits 2).
+    """
+    print(f"ambiguous short id '{token}':", file=stderr)
+    for i, (list_id, task) in enumerate(matches, start=1):
+        print(
+            f"  {i}  {_format_done_candidate(data, list_id, task)}",
+            file=stderr,
+        )
+
+    interactive = (
+        hasattr(stdin, "isatty")
+        and stdin.isatty()
+        and hasattr(stderr, "isatty")
+        and stderr.isatty()
+    )
+    if not interactive:
+        print(
+            f"ambiguous short id '{token}'; be more specific",
+            file=stderr,
+        )
+        return None
+
+    print(f"which one? [1-{len(matches)}, q cancels] ", end="", file=stderr)
+    try:
+        stderr.flush()
+    except Exception:
+        pass
+    try:
+        answer = stdin.readline()
+    except Exception:
+        return None
+    if not answer:
+        print("cancelled", file=stderr)
+        return None
+    answer = answer.strip().lower()
+    if answer in ("", "q", "quit", "n", "no"):
+        print("cancelled", file=stderr)
+        return None
+    if not answer.isdigit():
+        print(f"invalid choice '{answer}'", file=stderr)
+        return None
+    idx = int(answer)
+    if idx < 1 or idx > len(matches):
+        print(f"invalid choice '{answer}'", file=stderr)
+        return None
+    return matches[idx - 1]
+
+
+def _verb_done(raw_token, stdout, stderr, stdin=None):
+    """Marks the task addressed by a stable short id done and pushes it.
 
     Needs credentials, so TaskService is imported here, same as
     _verb_sync — never at module scope, so the CLI's read-only verbs never
     pay for it and unicurses isolation is unaffected.
+
+    Resolution uses the local cache only (derived short ids); no ephemeral
+    last-listing map is involved.
     """
-    mapping = shortids.read()
-    entry = mapping.get(str(number)) if mapping else None
-    if (
-        not isinstance(entry, dict)
-        or "list_id" not in entry
-        or "task_id" not in entry
-    ):
+    stdin = stdin or sys.stdin
+    token = shortids.normalize_token(raw_token)
+    if token is None:
         print(
-            f"no task numbered {number}; run a list command first",
+            f"invalid short id '{raw_token}'; "
+            f"use at least {shortids.MIN_INPUT_LEN} hex characters "
+            f"(as shown in a listing)",
             file=stderr,
         )
         return EXIT_USAGE
-    list_id, task_id = entry["list_id"], entry["task_id"]
+
+    data, _path = _load_cache(stderr)
+    if data is None:
+        return EXIT_ERROR
+
+    matches = shortids.resolve(data, token)
+    if not matches:
+        print(f"no task matches '{token}'", file=stderr)
+        return EXIT_USAGE
+    if len(matches) > 1:
+        chosen = _disambiguate(matches, token, data, stdout, stderr, stdin)
+        if chosen is None:
+            return EXIT_USAGE
+        list_id, task = chosen
+    else:
+        list_id, task = matches[0]
+
+    task_id = task.get("id")
 
     from .task_service import TaskService
 
@@ -241,13 +331,15 @@ def _verb_done(number, stdout, stderr):
         print(f"could not connect: {exc}", file=stderr)
         return EXIT_ERROR
 
-    task = service.get_task(list_id, task_id)
-    if task is None or task.get("deleted"):
-        print("task no longer exists; run a list command again", file=stderr)
+    # Re-fetch from the service's own cache view so we act on what will be
+    # synced, not a stale snapshot from the earlier resolve pass.
+    live = service.get_task(list_id, task_id)
+    if live is None or live.get("deleted"):
+        print("task no longer exists; run sync or a listing again", file=stderr)
         return EXIT_USAGE
 
-    title = queries.display_title(task)
-    if task.get("status") == "completed":
+    title = queries.display_title(live)
+    if live.get("status") == "completed":
         print(f'"{title}" is already done', file=stdout)
         return EXIT_OK
 
@@ -296,7 +388,7 @@ def run(argv, stdout=None, stderr=None):
         return _verb_sync(stdout, stderr)
 
     if args.verb == "done":
-        return _verb_done(args.number, stdout, stderr)
+        return _verb_done(args.short_id, stdout, stderr)
 
     data, path = _load_cache(stderr)
     if data is None:
@@ -347,35 +439,11 @@ def run(argv, stdout=None, stderr=None):
         if group:
             rows.sort(key=lambda row: row["list_title"])
 
-    # Numbers and the mapping come from this exact enumeration, in this
-    # exact order — the printed number and what `done <N>` acts on can
-    # never diverge, because both are derived from the same pass over the
-    # same finished row list.
-    mapping = {}
-    for i, row in enumerate(rows, start=1):
-        row["number"] = i
-        mapping[i] = {
-            "list_id": row["raw"].get("_list_id"),
-            "task_id": row["raw"].get("id"),
-        }
+    # Stable short ids are pure functions of each task's Google id — the
+    # same handle the renderer prints is what `done <short>` resolves,
+    # with no ephemeral last-listing map in between.
+    for row in rows:
+        row["short_id"] = shortids.short_id(row["raw"].get("id"))
 
     text = render.render(rows, mode, group_by_list=group, sync_info=info)
-    result = _emit(text, freshness.format_age(info), args, mode, stdout, stderr)
-
-    # Numbers only ever print in pretty mode (render.py's _render_pretty).
-    # Writing the mapping for a mode whose numbers were never shown would
-    # silently overwrite a still-valid mapping from an earlier pretty-mode
-    # listing, repointing a `done N` typed from memory at the wrong task.
-    if mode == render.PRETTY:
-        try:
-            shortids.write(mapping)
-        except OSError as exc:
-            # The query itself already succeeded and printed above — a
-            # failed follow-up mapping write must not crash an otherwise
-            # read-only, previously-safe listing verb with a raw traceback.
-            print(
-                f"warning: could not save the task numbers for 'done': {exc}",
-                file=stderr,
-            )
-
-    return result
+    return _emit(text, freshness.format_age(info), args, mode, stdout, stderr)

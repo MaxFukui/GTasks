@@ -161,47 +161,62 @@ class TestPretty(unittest.TestCase):
         )
         self.assertNotIn("\x1b[31m", out)
 
-    def test_numbers_are_not_printed_when_absent_from_the_row(self):
+    def test_short_ids_are_not_printed_when_absent_from_the_row(self):
         out = render.render(_rows(), render.PRETTY, group_by_list=True)
-        self.assertNotIn("1  ", out)
+        # No hex handle column when rows lack short_id.
+        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "").replace(
+            "\x1b[1m", ""
+        )
+        first_task = next(
+            ln for ln in plain.splitlines() if "Ship CLI" in ln
+        )
+        self.assertTrue(first_task.lstrip().startswith("○"))
 
-    def test_prints_the_row_number_when_present(self):
-        rows = [dict(_rows()[0], number=1)]
+    def test_prints_the_short_id_when_present(self):
+        rows = [dict(_rows()[0], short_id="a3f1")]
         out = render.render(rows, render.PRETTY, group_by_list=False)
-        self.assertTrue(out.lstrip().startswith("1"))
+        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "")
+        self.assertTrue(plain.lstrip().startswith("a3f1"))
 
-    def test_numbers_run_sequentially_across_group_headers(self):
+    def test_short_ids_appear_across_group_headers(self):
         rows = [
-            dict(_rows()[0], number=1),  # Work
-            dict(_rows()[2], number=2),  # Home — different group
+            dict(_rows()[0], short_id="aaaa"),  # Work
+            dict(_rows()[2], short_id="bbbb"),  # Home — different group
         ]
         out = render.render(rows, render.PRETTY, group_by_list=True)
-        lines = [ln for ln in out.splitlines() if ln.strip()]
-        numbered = [ln for ln in lines if ln.lstrip()[:1].isdigit()]
-        self.assertEqual(len(numbered), 2)
-        self.assertTrue(numbered[0].lstrip().startswith("1"))
-        self.assertTrue(numbered[1].lstrip().startswith("2"))
+        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "").replace(
+            "\x1b[1m", ""
+        )
+        self.assertIn("aaaa", plain)
+        self.assertIn("bbbb", plain)
 
-    def test_number_prefix_comes_before_the_depth_indent(self):
-        rows = [dict(_rows()[0], number=1, depth=1, starred=False)]
+    def test_short_id_prefix_comes_before_the_depth_indent(self):
+        rows = [dict(_rows()[0], short_id="a3f1", depth=1, starred=False)]
         out = render.render(rows, render.PRETTY, group_by_list=False)
+        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "")
         # depth=1 indents by 4 spaces (see test_indents_subtasks_by_depth);
-        # the number prefix comes first, so the line does not start with
-        # the raw 4-space indent the way an unnumbered row does.
-        self.assertFalse(out.startswith("    "))
-        self.assertIn("1", out.split("○")[0])
+        # the short id comes first, so the line does not start with the
+        # raw 4-space indent the way an undecorated row does.
+        self.assertFalse(plain.startswith("    "))
+        self.assertIn("a3f1", plain.split("○")[0])
 
-    def test_plain_mode_never_shows_a_number_even_if_present(self):
-        rows = [dict(_rows()[0], number=1)]
+    def test_plain_mode_shows_short_id_when_present(self):
+        rows = [dict(_rows()[0], short_id="a3f1")]
         out = render.render(rows, render.PLAIN, group_by_list=False)
-        self.assertEqual(out, "[ ] Ship CLI  due 2026-08-05")
+        self.assertEqual(out, "a3f1  [ ] Ship CLI  due 2026-08-05")
 
-    def test_json_mode_never_shows_a_number_even_if_present(self):
-        rows = [dict(_rows()[0], number=1)]
+    def test_json_mode_carries_short_id_when_present(self):
+        rows = [dict(_rows()[0], short_id="a3f1")]
         payload = json.loads(
             render.render(rows, render.JSON, group_by_list=False)
         )
-        self.assertNotIn("number", payload["tasks"][0])
+        self.assertEqual(payload["tasks"][0]["short_id"], "a3f1")
+
+    def test_json_mode_omits_short_id_when_absent(self):
+        payload = json.loads(
+            render.render(_rows()[:1], render.JSON, group_by_list=False)
+        )
+        self.assertNotIn("short_id", payload["tasks"][0])
 
 
 class TestJson(unittest.TestCase):

@@ -1,74 +1,101 @@
-"""Tests for the done-command short-id mapping file.
+"""Tests for stable short ids derived from Google task ids.
 
-write()/read() are pure I/O — no cache, no network, no credentials.
-GTASK_SHORT_IDS_FILE points them at a temp file so these never touch the
-developer's real ~/.gtask.
+No filesystem, no network — short_id/resolve/normalize_token are pure.
 """
 
-import os
-import tempfile
+import hashlib
 import unittest
 
 from tasks_tui import shortids
 
 
-class _MappingFileCase(unittest.TestCase):
-    def setUp(self):
-        fd, self.path = tempfile.mkstemp(suffix=".json")
-        os.close(fd)
-        os.remove(self.path)  # start absent
-        os.environ["GTASK_SHORT_IDS_FILE"] = self.path
-        self.addCleanup(os.environ.pop, "GTASK_SHORT_IDS_FILE", None)
-        self.addCleanup(self._remove_if_exists)
-
-    def _remove_if_exists(self):
-        if os.path.exists(self.path):
-            os.remove(self.path)
+def _sha_prefix(task_id, n=shortids.DISPLAY_LEN):
+    return hashlib.sha1(task_id.encode("utf-8")).hexdigest()[:n]
 
 
-class TestRoundTrip(_MappingFileCase):
-    def test_write_then_read_round_trips(self):
-        shortids.write({
-            1: {"list_id": "L1", "task_id": "t1"},
-            2: {"list_id": "L1", "task_id": "t2"},
-        })
-        mapping = shortids.read()
-        self.assertEqual(mapping["1"], {"list_id": "L1", "task_id": "t1"})
-        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t2"})
+class TestShortId(unittest.TestCase):
+    def test_is_deterministic(self):
+        self.assertEqual(shortids.short_id("t1"), shortids.short_id("t1"))
 
-    def test_write_overwrites_the_previous_mapping(self):
-        shortids.write({1: {"list_id": "L1", "task_id": "old"}})
-        shortids.write({1: {"list_id": "L1", "task_id": "new"}})
-        mapping = shortids.read()
-        self.assertEqual(mapping["1"]["task_id"], "new")
-        self.assertNotIn("2", mapping)
+    def test_is_display_len_hex(self):
+        handle = shortids.short_id("t1")
+        self.assertEqual(len(handle), shortids.DISPLAY_LEN)
+        self.assertTrue(all(c in "0123456789abcdef" for c in handle))
 
-    def test_write_of_empty_mapping_is_a_valid_empty_result(self):
-        shortids.write({})
-        self.assertEqual(shortids.read(), {})
+    def test_matches_sha1_prefix(self):
+        self.assertEqual(shortids.short_id("t1"), _sha_prefix("t1"))
 
-    def test_write_creates_the_parent_directory(self):
-        nested = os.path.join(
-            tempfile.mkdtemp(), "nested", "dir", "last_ids.json"
-        )
-        os.environ["GTASK_SHORT_IDS_FILE"] = nested
-        shortids.write({1: {"list_id": "L1", "task_id": "t1"}})
-        self.assertTrue(os.path.exists(nested))
+    def test_empty_id_returns_empty_string(self):
+        self.assertEqual(shortids.short_id(""), "")
+        self.assertEqual(shortids.short_id(None), "")
+
+    def test_different_ids_usually_differ(self):
+        self.assertNotEqual(shortids.short_id("t1"), shortids.short_id("t2"))
 
 
-class TestReadMissingOrMalformed(_MappingFileCase):
-    def test_missing_file_returns_none(self):
-        self.assertIsNone(shortids.read())
+class TestNormalizeToken(unittest.TestCase):
+    def test_lowercases_and_accepts_min_length(self):
+        self.assertEqual(shortids.normalize_token("A3F"), "a3f")
 
-    def test_malformed_json_returns_none_not_a_crash(self):
-        with open(self.path, "w") as f:
-            f.write("{not valid json")
-        self.assertIsNone(shortids.read())
+    def test_accepts_longer_than_display(self):
+        self.assertEqual(shortids.normalize_token("a3f1b"), "a3f1b")
 
-    def test_valid_json_that_is_not_an_object_returns_none(self):
-        with open(self.path, "w") as f:
-            f.write("[1, 2, 3]")
-        self.assertIsNone(shortids.read())
+    def test_rejects_too_short(self):
+        self.assertIsNone(shortids.normalize_token("a3"))
+        self.assertIsNone(shortids.normalize_token(""))
+
+    def test_rejects_non_hex(self):
+        self.assertIsNone(shortids.normalize_token("zzzz"))
+        self.assertIsNone(shortids.normalize_token("ship"))
+
+
+class TestResolve(unittest.TestCase):
+    def _data(self):
+        return {
+            "task_lists": [
+                {"id": "L1", "title": "Work"},
+                {"id": "L2", "title": "Home"},
+                {"id": "L3", "title": "Gone", "deleted": True},
+            ],
+            "tasks": {
+                "L1": [
+                    {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+                    {"id": "t2", "title": "Review", "status": "needsAction"},
+                    {"id": "gone", "title": "Deleted", "deleted": True},
+                ],
+                "L2": [
+                    {"id": "t3", "title": "Buy milk", "status": "needsAction"},
+                ],
+                "L3": [
+                    {"id": "t4", "title": "In deleted list", "status": "needsAction"},
+                ],
+            },
+        }
+
+    def test_exact_short_finds_the_task(self):
+        data = self._data()
+        handle = shortids.short_id("t1")
+        hits = shortids.resolve(data, handle)
+        self.assertEqual([(lid, t["id"]) for lid, t in hits], [("L1", "t1")])
+
+    def test_prefix_match_when_unique(self):
+        data = self._data()
+        handle = shortids.short_id("t1")
+        hits = shortids.resolve(data, handle[:3])
+        # May or may not be unique depending on hash; at least includes t1.
+        ids = [t["id"] for _, t in hits]
+        self.assertIn("t1", ids)
+
+    def test_excludes_deleted_tasks_and_lists(self):
+        data = self._data()
+        gone_handle = shortids.short_id("gone")
+        self.assertEqual(shortids.resolve(data, gone_handle), [])
+        t4_handle = shortids.short_id("t4")
+        self.assertEqual(shortids.resolve(data, t4_handle), [])
+
+    def test_no_match_returns_empty(self):
+        # 3 hex chars extremely unlikely to match our three live shorts.
+        self.assertEqual(shortids.resolve(self._data(), "000"), [])
 
 
 if __name__ == "__main__":

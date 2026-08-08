@@ -11,11 +11,10 @@ on the CLI path, since importing it initializes terminal state.
 pretty mode; when the caller does not pass one, it defaults to the system
 date (`datetime.date.today()`).
 
-A row is prefixed with its number in pretty mode if and only if it already
-carries a `number` key — plain and JSON output never show it. `cli.py`
-assigns numbers when it writes the short-id mapping `done <N>` reads from;
-this module has no idea that mapping exists, it only prints what it's
-given.
+A row is prefixed with its stable `short_id` in pretty and plain modes when
+that key is present. JSON carries `short_id` as a field on each task. The
+handle is derived from the Google task id by the caller; this module only
+prints what it is given.
 """
 
 import datetime
@@ -57,11 +56,19 @@ def _render_plain(rows, group_by_list):
     list_width = (
         max(len(row["list_title"]) for row in rows) if group_by_list else 0
     )
+    short_width = max(
+        (len(row.get("short_id") or "") for row in rows), default=0
+    )
 
     lines = []
     for row in rows:
         box = "[x]" if row["done"] else "[ ]"
-        parts = [f"{box} {row['title'].ljust(title_width)}"]
+        handle = row.get("short_id") or ""
+        if short_width:
+            head = f"{handle.ljust(short_width)}  {box} {row['title'].ljust(title_width)}"
+        else:
+            head = f"{box} {row['title'].ljust(title_width)}"
+        parts = [head]
         if group_by_list:
             parts.append(f"({row['list_title']})".ljust(list_width + 2))
         due = _due_text(row)
@@ -76,13 +83,20 @@ def _render_pretty(rows, group_by_list, today=None):
         return f"{_DIM}(nothing){_RESET}"
 
     today = today or datetime.date.today()
-    numbered = any(row.get("number") is not None for row in rows)
-    num_width = len(str(len(rows))) if numbered else 0
+    short_width = max(
+        (len(row.get("short_id") or "") for row in rows), default=0
+    )
 
     def one(row):
         prefix = ""
-        if numbered and row.get("number") is not None:
-            prefix = f"{row['number']:>{num_width}}  "
+        handle = row.get("short_id") or ""
+        if short_width and handle:
+            # Dim the handle so the title stays primary; fixed width keeps
+            # glyphs aligned across the listing.
+            pad = handle.ljust(short_width)
+            prefix = f"{_DIM}{pad}{_RESET}  "
+        elif short_width:
+            prefix = " " * (short_width + 2)
         indent = "  " + "  " * row["depth"]
         glyph = _DONE_GLYPH if row["done"] else _OPEN_GLYPH
         star = _STAR_GLYPH if row["starred"] and group_by_list is False else ""
@@ -118,10 +132,11 @@ def _payload_rows(rows):
     Unlike the pretty/plain paths, JSON output carries the original task
     dict (id, notes, _list_id, _list_title, ...) rather than the trimmed
     row shape — `raw`, `depth`, and `list_title` never appear in it. `title`,
-    `starred`, and `due` are overridden with the row's derived values so a
-    JSON consumer never has to parse the star marker back out of the title.
-    Building a fresh dict per row means neither the caller's rows nor the
-    underlying cache are mutated.
+    `starred`, `due`, and `short_id` (when present on the row) are set from
+    the derived row values so a JSON consumer never has to parse the star
+    marker back out of the title or re-hash the Google id. Building a fresh
+    dict per row means neither the caller's rows nor the underlying cache
+    are mutated.
     """
     out = []
     for row in rows:
@@ -129,6 +144,8 @@ def _payload_rows(rows):
         item["title"] = row["title"]
         item["starred"] = row["starred"]
         item["due"] = row["due"].isoformat() if row["due"] else None
+        if row.get("short_id"):
+            item["short_id"] = row["short_id"]
         out.append(item)
     return out
 

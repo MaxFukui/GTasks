@@ -367,20 +367,20 @@ class TestListVerbSubtasks(unittest.TestCase):
         parent_idx = next(i for i, ln in enumerate(lines) if "Parent A" in ln)
         child_idx = next(i for i, ln in enumerate(lines) if "Child of A" in ln)
         self.assertEqual(child_idx, parent_idx + 1)
-        # The number prefix comes before the depth indent (Task 3), so
-        # indentation now shows up as extra space *after* the number rather
-        # than at the start of the line. str.split(None, 1) would collapse
-        # that indent away along with the number (both are just runs of
-        # space characters with nothing to tell them apart), so instead
-        # strip only the leading digits and compare how many spaces remain
-        # before the glyph — the child's indent must be exactly one level
-        # (two spaces) deeper than the parent's.
-        def leading_spaces(line):
-            body = line.lstrip("0123456789")
-            return len(body) - len(body.lstrip(" "))
+        # The short-id prefix (possibly ANSI-dimmed) comes before the depth
+        # indent. Measure spaces between the handle and the status glyph —
+        # the child's indent must be exactly one level (two spaces) deeper.
+        import re
 
-        parent_spaces = leading_spaces(lines[parent_idx])
-        child_spaces = leading_spaces(lines[child_idx])
+        def spaces_before_glyph(line):
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            # handle + spaces + glyph
+            match = re.match(r"^[0-9a-f]*(\s+)[○●]", plain.lstrip())
+            self.assertIsNotNone(match, msg=plain)
+            return len(match.group(1))
+
+        parent_spaces = spaces_before_glyph(lines[parent_idx])
+        child_spaces = spaces_before_glyph(lines[child_idx])
         self.assertEqual(child_spaces, parent_spaces + 2)
 
     def test_order_is_parent_then_child_not_raw_cache_order(self):
@@ -413,159 +413,54 @@ class TestListVerbSubtasks(unittest.TestCase):
         self.assertIn("Child of C done", out)
 
 
-class TestShortIdMapping(_CliCase):
-    """Every listing verb writes number -> (list_id, task_id) after
-    rendering, matching what the pretty-mode output shows the user — but
-    only when the render mode was actually pretty, since that's the only
-    mode where the numbers being mapped were ever shown (Finding 3)."""
+class TestStableShortIdsInListing(_CliCase):
+    """Listings decorate each row with a stable short id derived from the
+    Google task id — no ephemeral last-listing map is written."""
 
-    def _read_mapping(self):
-        with open(self.short_ids_path) as f:
-            return json.load(f)
+    def test_fav_pretty_shows_short_ids(self):
+        from tasks_tui import shortids
 
-    def _run_pretty(self, argv):
-        # _CliCase.setUp sets NO_COLOR=1 and run_cli() uses a plain
-        # (non-TTY) io.StringIO, both of which force plain mode
-        # (render.pick_mode: `if not is_tty or no_color: PLAIN`) — and
-        # plain mode never writes the mapping. Unset NO_COLOR and use a
-        # TTY-reporting stdout so the listing actually renders in pretty
-        # mode, the only mode any of these tests can observe a write in.
         os.environ.pop("NO_COLOR", None)
         out_stream = _TTYStringIO()
         err_stream = io.StringIO()
-        code = cli.run(argv, stdout=out_stream, stderr=err_stream)
-        return code, out_stream.getvalue(), err_stream.getvalue()
+        code = cli.run(["fav"], stdout=out_stream, stderr=err_stream)
+        out = out_stream.getvalue()
 
-    def test_fav_writes_a_mapping_for_every_printed_task(self):
-        self._run_pretty(["fav"])
-        mapping = self._read_mapping()
-        # Starred: t4 (Home), t1 (Work), t5 (Work subtask). fav groups and
-        # sorts by list_title, so Home sorts before Work alphabetically;
-        # within Work, cache order keeps the parent (t1) ahead of its
-        # starred child (t5).
-        self.assertEqual(mapping["1"], {"list_id": "L2", "task_id": "t4"})
-        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t1"})
-        self.assertEqual(mapping["3"], {"list_id": "L1", "task_id": "t5"})
+        self.assertEqual(code, 0)
+        # Strip ANSI so we can match the bare handle.
+        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "").replace(
+            "\x1b[1m", ""
+        )
+        for task_id, title in (("t4", "Buy milk"), ("t1", "Ship CLI"), ("t5", "Write tests")):
+            handle = shortids.short_id(task_id)
+            line = next(ln for ln in plain.splitlines() if title.split("  ·")[0] in ln or title in ln)
+            self.assertTrue(
+                line.lstrip().startswith(handle),
+                msg=f"expected {handle!r} on line for {title!r}: {line!r}",
+            )
 
-    def test_list_verb_writes_a_mapping_in_parent_child_order(self):
-        self._run_pretty(["list", "Work"])
-        mapping = self._read_mapping()
-        # Parent t1, then its children t5/t6, then sibling top-level t3.
-        self.assertEqual(mapping["1"], {"list_id": "L1", "task_id": "t1"})
-        self.assertEqual(mapping["2"], {"list_id": "L1", "task_id": "t5"})
-        self.assertEqual(mapping["3"], {"list_id": "L1", "task_id": "t6"})
-        self.assertEqual(mapping["4"], {"list_id": "L1", "task_id": "t3"})
+    def test_plain_listing_also_shows_short_ids(self):
+        from tasks_tui import shortids
 
-    def test_lists_verb_does_not_write_a_mapping(self):
-        with open(self.short_ids_path, "w") as f:
-            json.dump({"1": {"list_id": "L1", "task_id": "t1"}}, f)
-        os.remove(self.short_ids_path)
-        self.run_cli(["lists"])
+        _, out, _ = self.run_cli(["fav"])
+        handle = shortids.short_id("t4")
+        line = next(ln for ln in out.splitlines() if "Buy milk" in ln)
+        self.assertTrue(line.lstrip().startswith(handle))
+
+    def test_json_payload_carries_short_id(self):
+        from tasks_tui import shortids
+
+        _, out, _ = self.run_cli(["fav", "--json"])
+        payload = json.loads(out)
+        by_id = {t["id"]: t for t in payload["tasks"]}
+        self.assertEqual(by_id["t1"]["short_id"], shortids.short_id("t1"))
+
+    def test_listing_does_not_write_a_last_ids_file(self):
+        os.environ.pop("NO_COLOR", None)
+        out_stream = _TTYStringIO()
+        err_stream = io.StringIO()
+        cli.run(["fav"], stdout=out_stream, stderr=err_stream)
         self.assertFalse(os.path.exists(self.short_ids_path))
-
-    def test_a_second_listing_overwrites_the_first_mapping(self):
-        self._run_pretty(["fav"])
-        first = self._read_mapping()
-        self.assertIn("2", first)
-        self._run_pretty(["list", "Home"])
-        second = self._read_mapping()
-        self.assertNotIn("2", second)  # Home has exactly one task
-
-    def test_empty_result_writes_an_empty_mapping(self):
-        self._run_pretty(["search", "zzz"])
-        self.assertEqual(self._read_mapping(), {})
-
-    def test_pretty_output_shows_the_same_numbers_as_the_mapping(self):
-        _, out, _ = self._run_pretty(["fav"])
-        mapping = self._read_mapping()
-        lines_with_1 = [ln for ln in out.splitlines() if ln.lstrip().startswith("1")]
-        self.assertTrue(lines_with_1)
-        self.assertIn("Buy milk", lines_with_1[0])  # mapping["1"] is t4
-        self.assertEqual(mapping["1"]["task_id"], "t4")
-
-    def test_pretty_mode_listing_writes_the_mapping(self):
-        # Explicit companion to the three "does NOT write" tests below —
-        # confirms in one place that the *only* thing gating the write is
-        # pretty mode, not some other side effect of TTY-ness or --json.
-        self._run_pretty(["fav"])
-        self.assertTrue(os.path.exists(self.short_ids_path))
-        mapping = self._read_mapping()
-        self.assertIn("1", mapping)
-
-    def test_plain_mode_listing_does_not_touch_the_mapping_file(self):
-        # Numbers only ever print in pretty mode. Writing the mapping in
-        # plain mode would silently overwrite it with numbers the user
-        # never saw, potentially repointing a still-valid `done N` typed
-        # from an earlier pretty-mode listing at the wrong task.
-        seeded = {"1": {"list_id": "SEEDED", "task_id": "seeded-task"}}
-        with open(self.short_ids_path, "w") as f:
-            json.dump(seeded, f)
-
-        # _CliCase.setUp already sets NO_COLOR=1 and run_cli uses a plain
-        # (non-TTY) io.StringIO, so this listing renders in plain mode.
-        code, out, _ = self.run_cli(["fav"])
-
-        self.assertEqual(code, 0)
-        self.assertIn("Ship CLI", out)
-        self.assertEqual(self._read_mapping(), seeded)
-
-    def test_json_mode_listing_does_not_touch_the_mapping_file(self):
-        seeded = {"1": {"list_id": "SEEDED", "task_id": "seeded-task"}}
-        with open(self.short_ids_path, "w") as f:
-            json.dump(seeded, f)
-
-        code, out, _ = self.run_cli(["fav", "--json"])
-
-        self.assertEqual(code, 0)
-        self.assertTrue(out)
-        self.assertEqual(self._read_mapping(), seeded)
-
-    def test_tty_with_no_color_set_does_not_touch_the_mapping_file(self):
-        # A TTY stdout alone isn't enough to trigger pretty mode — NO_COLOR
-        # forces plain per render.pick_mode, and _CliCase.setUp already
-        # sets it. Numbers never print here either, so the mapping must be
-        # left untouched even though stdout reports itself as a terminal.
-        seeded = {"1": {"list_id": "SEEDED", "task_id": "seeded-task"}}
-        with open(self.short_ids_path, "w") as f:
-            json.dump(seeded, f)
-
-        out_stream = _TTYStringIO()
-        err_stream = io.StringIO()
-        code = cli.run(["fav"], stdout=out_stream, stderr=err_stream)
-
-        self.assertEqual(code, 0)
-        self.assertIn("Ship CLI", out_stream.getvalue())
-        self.assertEqual(self._read_mapping(), seeded)
-
-
-class TestShortIdMappingWriteFailure(_CliCase):
-    """shortids.write() has no built-in guard against an unwritable mapping
-    file — cli.py must catch the failure itself so a previously-safe,
-    read-only listing verb never crashes with a raw traceback just because
-    the follow-up mapping write failed."""
-
-    def test_write_failure_is_a_warning_not_a_crash(self):
-        import tasks_tui.shortids as shortids_module
-
-        def failing_write(_mapping):
-            raise OSError("permission denied")
-
-        original_write = shortids_module.write
-        shortids_module.write = failing_write
-        self.addCleanup(setattr, shortids_module, "write", original_write)
-
-        os.environ.pop("NO_COLOR", None)
-        out_stream = _TTYStringIO()
-        err_stream = io.StringIO()
-        code = cli.run(["fav"], stdout=out_stream, stderr=err_stream)
-        out, err = out_stream.getvalue(), err_stream.getvalue()
-
-        self.assertEqual(code, 0)
-        self.assertIn("Ship CLI", out)
-        self.assertIn("Buy milk", out)
-        self.assertTrue(err.strip())
-        self.assertNotIn("Traceback", out)
-        self.assertNotIn("Traceback", err)
 
 
 class _FakeGoogleReq:
@@ -620,9 +515,9 @@ class _FakeGoogleService:
 
 
 class _DoneCase(unittest.TestCase):
-    """Base case for `done`: a temp cache/short-ids pair, plus a
-    TaskService whose __init__ is monkeypatched so `TaskService()` inside
-    cli.py's _verb_done never touches real credentials or the network.
+    """Base case for `done`: a temp cache plus a TaskService whose
+    __init__ is monkeypatched so `TaskService()` inside cli.py's
+    _verb_done never touches real credentials or the network.
     """
 
     def setUp(self):
@@ -631,15 +526,8 @@ class _DoneCase(unittest.TestCase):
         os.remove(self.cache_path)
         os.environ["GTASK_CACHE_FILE"] = self.cache_path
 
-        fd, self.short_ids_path = tempfile.mkstemp(suffix=".json")
-        os.close(fd)
-        os.remove(self.short_ids_path)
-        os.environ["GTASK_SHORT_IDS_FILE"] = self.short_ids_path
-
         self.addCleanup(os.environ.pop, "GTASK_CACHE_FILE", None)
-        self.addCleanup(os.environ.pop, "GTASK_SHORT_IDS_FILE", None)
         self.addCleanup(self._remove_if_exists, self.cache_path)
-        self.addCleanup(self._remove_if_exists, self.short_ids_path)
 
     def _remove_if_exists(self, path):
         if os.path.exists(path):
@@ -659,13 +547,45 @@ class _DoneCase(unittest.TestCase):
         ts_module.TaskService.__init__ = fake_init
         self.addCleanup(setattr, ts_module.TaskService, "__init__", original_init)
 
-    def _seed_mapping(self, mapping):
-        import tasks_tui.shortids as shortids_module
-        shortids_module.write(mapping)
+    def _seed_cache(self, data):
+        """Write the cache file `done` resolves short ids against."""
+        with open(self.cache_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
 
-    def run_cli(self, argv):
+    def _short(self, task_id):
+        from tasks_tui import shortids
+        return shortids.short_id(task_id)
+
+    def run_cli(self, argv, stdin=None):
         out, err = io.StringIO(), io.StringIO()
+        # done may prompt on ambiguous shorts; default stdin is non-TTY empty.
+        if stdin is None:
+            stdin = io.StringIO("")
         code = cli.run(argv, stdout=out, stderr=err)
+        # Note: cli.run does not yet take stdin; _verb_done uses sys.stdin.
+        # Tests that need a prompt monkeypatch sys.stdin themselves.
+        return code, out.getvalue(), err.getvalue()
+
+    def run_cli_with_stdin(self, argv, stdin_text):
+        import sys
+
+        class _TTYStdin(io.StringIO):
+            def isatty(self):
+                return True
+
+        class _TTYStderr(io.StringIO):
+            def isatty(self):
+                return True
+
+        out = io.StringIO()
+        err = _TTYStderr()
+        fake_in = _TTYStdin(stdin_text)
+        original = sys.stdin
+        sys.stdin = fake_in
+        try:
+            code = cli.run(argv, stdout=out, stderr=err)
+        finally:
+            sys.stdin = original
         return code, out.getvalue(), err.getvalue()
 
 
@@ -680,16 +600,34 @@ class TestDoneHappyPath(_DoneCase):
         google = _FakeGoogleService(
             {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]}
         )
+        self._seed_cache(data)
         self._install_fake_task_service(data, google)
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
 
-        code, out, err = self.run_cli(["done", "1"])
+        code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 0)
         self.assertIn('marked "Ship CLI" done', out)
         self.assertIn("synced", out)
         self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
         self.assertEqual(len(google.tasks().patch_calls), 1)
+
+    def test_accepts_unique_prefix_of_at_least_three_chars(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService(
+            {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]}
+        )
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["done", self._short("t1")[:3]])
+
+        self.assertEqual(code, 0)
+        self.assertIn('marked "Ship CLI" done', out)
 
     def test_cascades_to_subtasks_like_the_tui_does(self):
         data = {
@@ -705,10 +643,10 @@ class TestDoneHappyPath(_DoneCase):
             {"id": "c1", "title": "Child", "status": "needsAction",
              "parent": "p1"},
         ]})
+        self._seed_cache(data)
         self._install_fake_task_service(data, google)
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "p1"}})
 
-        code, _, _ = self.run_cli(["done", "1"])
+        code, _, _ = self.run_cli(["done", self._short("p1")])
 
         self.assertEqual(code, 0)
         by_id = {t["id"]: t for t in data["tasks"]["L1"]}
@@ -725,10 +663,10 @@ class TestDoneAlreadyDone(_DoneCase):
             ]},
         }
         google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
         self._install_fake_task_service(data, google)
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
 
-        code, out, _ = self.run_cli(["done", "1"])
+        code, out, _ = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 0)
         self.assertIn('"Ship CLI" is already done', out)
@@ -736,28 +674,129 @@ class TestDoneAlreadyDone(_DoneCase):
         self.assertEqual(len(google.tasks().patch_calls), 0)
 
 
-class TestDoneMissingMapping(_DoneCase):
-    def test_no_mapping_file_exits_2(self):
-        code, out, err = self.run_cli(["done", "1"])
+class TestDoneResolveErrors(_DoneCase):
+    def test_missing_cache_exits_1(self):
+        code, out, err = self.run_cli(["done", "abcd"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("no local cache", err)
+
+    def test_unknown_short_exits_2(self):
+        self._seed_cache({
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        })
+        code, out, err = self.run_cli(["done", "0000"])
         self.assertEqual(code, 2)
         self.assertEqual(out, "")
-        self.assertIn("no task numbered 1", err)
+        self.assertIn("no task matches", err)
 
-    def test_number_not_in_mapping_exits_2(self):
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
-        code, out, err = self.run_cli(["done", "9"])
+    def test_too_short_token_exits_2(self):
+        self._seed_cache({
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        })
+        code, out, err = self.run_cli(["done", "ab"])
         self.assertEqual(code, 2)
-        self.assertIn("no task numbered 9", err)
+        self.assertIn("invalid short id", err)
+
+    def test_non_hex_token_exits_2(self):
+        self._seed_cache({
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        })
+        code, out, err = self.run_cli(["done", "ship"])
+        self.assertEqual(code, 2)
+        self.assertIn("invalid short id", err)
 
 
-class TestDoneStaleMapping(_DoneCase):
-    def test_task_deleted_since_the_listing_exits_2(self):
-        data = {"task_lists": [{"id": "L1", "title": "Work"}], "tasks": {"L1": []}}
-        google = _FakeGoogleService({"L1": []})
+class TestDoneAmbiguous(_DoneCase):
+    def test_non_interactive_ambiguous_exits_2_with_candidates(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "Beta", "status": "needsAction"},
+            ]},
+        }
+        self._seed_cache(data)
+
+        import tasks_tui.shortids as shortids_module
+
+        original = shortids_module.short_id
+
+        def fake_short(task_id):
+            return {"t1": "aaaa", "t2": "aaab"}.get(task_id, original(task_id))
+
+        shortids_module.short_id = fake_short
+        self.addCleanup(setattr, shortids_module, "short_id", original)
+
+        code, out, err = self.run_cli(["done", "aaa"])
+
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("ambiguous short id", err)
+        self.assertIn("Alpha", err)
+        self.assertIn("Beta", err)
+
+    def test_interactive_prompt_selects_the_chosen_task(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "Beta", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "Beta", "status": "needsAction"},
+            ]
+        })
+        self._seed_cache(data)
         self._install_fake_task_service(data, google)
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "gone"}})
 
-        code, out, err = self.run_cli(["done", "1"])
+        import tasks_tui.shortids as shortids_module
+
+        original = shortids_module.short_id
+
+        def fake_short(task_id):
+            return {"t1": "aaaa", "t2": "aaab"}.get(task_id, original(task_id))
+
+        shortids_module.short_id = fake_short
+        self.addCleanup(setattr, shortids_module, "short_id", original)
+
+        code, out, err = self.run_cli_with_stdin(["done", "aaa"], "2\n")
+
+        self.assertEqual(code, 0)
+        self.assertIn('marked "Beta" done', out)
+        by_id = {t["id"]: t for t in data["tasks"]["L1"]}
+        self.assertEqual(by_id["t1"]["status"], "needsAction")
+        self.assertEqual(by_id["t2"]["status"], "completed")
+
+
+class TestDoneStaleTask(_DoneCase):
+    def test_task_gone_from_service_exits_2(self):
+        # Cache still has the task for resolve, but the live service view
+        # does not — e.g. deleted between resolve and action.
+        disk = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        }
+        live = {"task_lists": [{"id": "L1", "title": "Work"}], "tasks": {"L1": []}}
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(disk)
+        self._install_fake_task_service(live, google)
+
+        code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 2)
         self.assertEqual(out, "")
@@ -776,10 +815,10 @@ class TestDoneSyncFailure(_DoneCase):
             {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]},
             fail_patch=True,
         )
+        self._seed_cache(data)
         self._install_fake_task_service(data, google)
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
 
-        code, out, err = self.run_cli(["done", "1"])
+        code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 1)
         self.assertIn('marked "Ship CLI" done locally', out)
@@ -813,8 +852,8 @@ class TestDoneSyncFailure(_DoneCase):
             {"L1": [{"id": "t1", "title": "Ship CLI", "status": "needsAction"}]},
             fail_patch=True,
         )
+        self._seed_cache(data)
         self._install_fake_task_service(data, google)
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
 
         import tasks_tui.local_storage as local_storage_module
 
@@ -824,7 +863,7 @@ class TestDoneSyncFailure(_DoneCase):
             setattr, local_storage_module, "save_data", original_save_data
         )
 
-        code, out, err = self.run_cli(["done", "1"])
+        code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 1)
         self.assertNotIn("done locally", out)
@@ -843,22 +882,18 @@ class TestDoneConstructionFailure(_DoneCase):
         ts_module.TaskService.__init__ = failing_init
         self.addCleanup(setattr, ts_module.TaskService, "__init__", original_init)
 
-        self._seed_mapping({1: {"list_id": "L1", "task_id": "t1"}})
+        self._seed_cache({
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Ship CLI", "status": "needsAction"},
+            ]},
+        })
 
-        code, out, err = self.run_cli(["done", "1"])
+        code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
         self.assertIn("could not connect", err)
-
-
-class TestDoneArgparse(_DoneCase):
-    def test_non_integer_argument_exits_2(self):
-        # argparse's own type=int error goes to the real stderr, not the
-        # injected stream — only the return code is asserted, same pattern
-        # already used for the typo'd-verb case.
-        code, _, _ = self.run_cli(["done", "abc"])
-        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":
