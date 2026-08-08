@@ -19,6 +19,8 @@ prints what it is given.
 
 import datetime
 import json
+import re
+import shutil
 
 PRETTY = "pretty"
 PLAIN = "plain"
@@ -29,9 +31,17 @@ _DIM = "\x1b[2m"
 _BOLD = "\x1b[1m"
 _RED = "\x1b[31m"
 
+# Soft 256-color backgrounds for pretty mode only. Tuned for dark terminals;
+# plain/JSON never emit them. Header is a touch brighter than zebra so
+# section breaks read as bands, not just bold text.
+_BG_HEADER = "\x1b[48;5;238m"
+_BG_ZEBRA = "\x1b[48;5;236m"
+
 _OPEN_GLYPH = "○"
 _DONE_GLYPH = "●"
 _STAR_GLYPH = "⭐"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def pick_mode(is_tty, want_json, no_color):
@@ -46,6 +56,33 @@ def pick_mode(is_tty, want_json, no_color):
 def _due_text(row):
     due = row.get("due")
     return f"due {due.isoformat()}" if due else ""
+
+
+def _visible_len(text):
+    """Column width of `text` with ANSI SGR sequences removed."""
+    return len(_ANSI_RE.sub("", text))
+
+
+def _term_width():
+    try:
+        return shutil.get_terminal_size(fallback=(80, 24)).columns
+    except Exception:
+        return 80
+
+
+def _paint_bg(text, bg, width):
+    """Fill a line with `bg`, padded to `width` visible columns.
+
+    Nested styles inside `text` often emit a full SGR reset (`\x1b[0m`), which
+    would also clear the background and leave a hole in the stripe. After
+    every reset we re-open `bg` so dim/red/bold spans keep the row band.
+    """
+    if not bg:
+        return text
+    pad = max(0, width - _visible_len(text))
+    body = text + (" " * pad)
+    body = body.replace(_RESET, _RESET + bg)
+    return f"{bg}{body}{_RESET}"
 
 
 def _render_plain(rows, group_by_list):
@@ -111,19 +148,38 @@ def _render_pretty(rows, group_by_list, today=None):
             text = f"{text}  {stamp}"
         return text
 
+    # Build undecorated lines first, then paint backgrounds in a second
+    # pass so every band shares one width (longest content line, capped by
+    # the terminal) and zebra index is a pure function of task order.
+    raw_lines = []  # (kind, text) kind in {"header", "task", "blank"}
     if not group_by_list:
-        return "\n".join(one(row) for row in rows)
+        for row in rows:
+            raw_lines.append(("task", one(row)))
+    else:
+        current = None
+        for row in rows:
+            if row["list_title"] != current:
+                current = row["list_title"]
+                if raw_lines:
+                    raw_lines.append(("blank", ""))
+                raw_lines.append(("header", f"{_BOLD}{current}{_RESET}"))
+            raw_lines.append(("task", one(row)))
 
-    lines = []
-    current = None
-    for row in rows:
-        if row["list_title"] != current:
-            current = row["list_title"]
-            if lines:
-                lines.append("")
-            lines.append(f"{_BOLD}{current}{_RESET}")
-        lines.append(one(row))
-    return "\n".join(lines)
+    content_width = max((_visible_len(text) for _, text in raw_lines if text), default=0)
+    width = max(content_width, min(_term_width(), 120))
+
+    painted = []
+    task_index = 0
+    for kind, text in raw_lines:
+        if kind == "blank":
+            painted.append("")
+        elif kind == "header":
+            painted.append(_paint_bg(text, _BG_HEADER, width))
+        else:
+            bg = _BG_ZEBRA if task_index % 2 == 1 else ""
+            painted.append(_paint_bg(text, bg, width) if bg else text)
+            task_index += 1
+    return "\n".join(painted)
 
 
 def _payload_rows(rows):

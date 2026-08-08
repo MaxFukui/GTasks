@@ -427,10 +427,11 @@ class TestStableShortIdsInListing(_CliCase):
         out = out_stream.getvalue()
 
         self.assertEqual(code, 0)
-        # Strip ANSI so we can match the bare handle.
-        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "").replace(
-            "\x1b[1m", ""
-        )
+        # Strip ANSI (including zebra/header backgrounds) so we can match
+        # the bare handle at the start of each task line.
+        import re
+
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
         for task_id, title in (("t4", "Buy milk"), ("t1", "Ship CLI"), ("t5", "Write tests")):
             handle = shortids.short_id(task_id)
             line = next(ln for ln in plain.splitlines() if title.split("  ·")[0] in ln or title in ln)

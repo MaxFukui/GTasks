@@ -6,9 +6,16 @@ The renderer is pure: rows in, string out.
 
 import datetime
 import json
+import re
 import unittest
 
 from tasks_tui import render
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text):
+    return _ANSI_RE.sub("", text)
 
 
 def _rows():
@@ -129,7 +136,7 @@ class TestPretty(unittest.TestCase):
     def test_indents_subtasks_by_depth(self):
         rows = [dict(_rows()[0], depth=1, starred=False)]
         out = render.render(rows, render.PRETTY, group_by_list=False)
-        self.assertTrue(out.startswith("    "))
+        self.assertTrue(_strip_ansi(out).startswith("    "))
 
     def test_overdue_and_not_done_renders_red(self):
         rows = [_rows()[0]]  # due 2026-08-05, not done
@@ -164,9 +171,7 @@ class TestPretty(unittest.TestCase):
     def test_short_ids_are_not_printed_when_absent_from_the_row(self):
         out = render.render(_rows(), render.PRETTY, group_by_list=True)
         # No hex handle column when rows lack short_id.
-        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "").replace(
-            "\x1b[1m", ""
-        )
+        plain = _strip_ansi(out)
         first_task = next(
             ln for ln in plain.splitlines() if "Ship CLI" in ln
         )
@@ -175,7 +180,7 @@ class TestPretty(unittest.TestCase):
     def test_prints_the_short_id_when_present(self):
         rows = [dict(_rows()[0], short_id="a3f1")]
         out = render.render(rows, render.PRETTY, group_by_list=False)
-        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "")
+        plain = _strip_ansi(out)
         self.assertTrue(plain.lstrip().startswith("a3f1"))
 
     def test_short_ids_appear_across_group_headers(self):
@@ -184,21 +189,52 @@ class TestPretty(unittest.TestCase):
             dict(_rows()[2], short_id="bbbb"),  # Home — different group
         ]
         out = render.render(rows, render.PRETTY, group_by_list=True)
-        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "").replace(
-            "\x1b[1m", ""
-        )
+        plain = _strip_ansi(out)
         self.assertIn("aaaa", plain)
         self.assertIn("bbbb", plain)
 
     def test_short_id_prefix_comes_before_the_depth_indent(self):
         rows = [dict(_rows()[0], short_id="a3f1", depth=1, starred=False)]
         out = render.render(rows, render.PRETTY, group_by_list=False)
-        plain = out.replace("\x1b[2m", "").replace("\x1b[0m", "")
+        plain = _strip_ansi(out)
         # depth=1 indents by 4 spaces (see test_indents_subtasks_by_depth);
         # the short id comes first, so the line does not start with the
         # raw 4-space indent the way an undecorated row does.
         self.assertFalse(plain.startswith("    "))
         self.assertIn("a3f1", plain.split("○")[0])
+
+    def test_list_headers_get_a_background_band(self):
+        out = render.render(_rows(), render.PRETTY, group_by_list=True)
+        header_line = next(ln for ln in out.splitlines() if "Work" in ln)
+        self.assertIn(render._BG_HEADER, header_line)
+
+    def test_zebra_stripes_alternate_task_rows(self):
+        # Two tasks in one group: first plain, second zebra.
+        rows = [_rows()[0], _rows()[1]]  # both Work
+        out = render.render(rows, render.PRETTY, group_by_list=True)
+        task_lines = [
+            ln for ln in out.splitlines()
+            if "Ship CLI" in ln or "Review PR" in ln
+        ]
+        self.assertEqual(len(task_lines), 2)
+        self.assertNotIn(render._BG_ZEBRA, task_lines[0])
+        self.assertIn(render._BG_ZEBRA, task_lines[1])
+
+    def test_plain_mode_never_emits_backgrounds(self):
+        out = render.render(_rows(), render.PLAIN, group_by_list=True)
+        self.assertNotIn("\x1b[48", out)
+
+    def test_zebra_reopens_background_after_inner_reset(self):
+        # A dim short id emits \x1b[0m mid-line; the zebra painter must
+        # re-open the bg afterward or the stripe dies after the handle.
+        rows = [
+            dict(_rows()[0], short_id="a3f1"),
+            dict(_rows()[1], short_id="b91c"),
+        ]
+        out = render.render(rows, render.PRETTY, group_by_list=False)
+        zebra_line = next(ln for ln in out.splitlines() if "Review PR" in ln)
+        # After the first reset that follows the dim handle, bg must return.
+        self.assertGreater(zebra_line.count(render._BG_ZEBRA), 1)
 
     def test_plain_mode_shows_short_id_when_present(self):
         rows = [dict(_rows()[0], short_id="a3f1")]
