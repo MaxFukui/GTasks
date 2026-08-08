@@ -322,13 +322,42 @@ class TestRenderLists(unittest.TestCase):
             {"title": "Home", "undone": 0, "total": 1},
         ]
 
-    def test_plain_shows_counts(self):
+    def test_plain_shows_counts_and_bar(self):
         out = render.render_lists(self._entries(), render.PLAIN)
-        self.assertEqual(out.splitlines(), ["Work  2/5", "Home  0/1"])
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertRegex(lines[0], r"^Work  +2/5  +█+░*$")
+        self.assertRegex(lines[1], r"^Home  +0/1  +░+$")
+        self.assertNotIn("\x1b", out)
 
     def test_json_shows_counts(self):
         payload = json.loads(render.render_lists(self._entries(), render.JSON))
         self.assertEqual(payload["lists"][0]["undone"], 2)
+
+    def test_pretty_has_summary_header_band(self):
+        out = render.render_lists(self._entries(), render.PRETTY)
+        lines = out.splitlines()
+        self.assertIn(render._BG_HEADER, lines[0])
+        plain = _strip_ansi(lines[0])
+        self.assertIn("Lists", plain)
+        self.assertIn("2 open", plain)
+        self.assertIn("2 list", plain)  # "2 lists"
+
+    def test_pretty_zebras_alternate_list_rows(self):
+        out = render.render_lists(self._entries(), render.PRETTY)
+        work = next(
+            ln for ln in out.splitlines()
+            if "Work" in _strip_ansi(ln) and "Lists" not in _strip_ansi(ln)
+        )
+        home = next(ln for ln in out.splitlines() if "Home" in _strip_ansi(ln))
+        self.assertNotIn(render._BG_ZEBRA, work)  # first body row
+        self.assertIn(render._BG_ZEBRA, home)  # second body row
+
+    def test_progress_bar_scales(self):
+        self.assertEqual(render._progress_bar(0, 0, width=4), "░░░░")
+        self.assertEqual(render._progress_bar(0, 5, width=4), "░░░░")
+        self.assertEqual(render._progress_bar(5, 5, width=4), "████")
+        self.assertEqual(render._progress_bar(1, 2, width=4), "██░░")
 
 
 if __name__ == "__main__":

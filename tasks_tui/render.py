@@ -225,8 +225,27 @@ def render(rows, mode, group_by_list, sync_info=None, today=None):
     return _render_pretty(rows, group_by_list, today=today)
 
 
+def _progress_bar(undone, total, width=10, filled="█", empty="░"):
+    """Compact bar: filled portion = open/undone share of total.
+
+    Empty lists render an all-empty bar so the column still aligns.
+    """
+    if width <= 0:
+        return ""
+    if total <= 0:
+        return empty * width
+    n_fill = int(round((undone / total) * width))
+    n_fill = max(0, min(width, n_fill))
+    return filled * n_fill + empty * (width - n_fill)
+
+
 def render_lists(entries, mode, sync_info=None):
-    """Renders the `lists` verb: one list per line with undone/total counts."""
+    """Renders the `lists` verb: one list per line with undone/total counts.
+
+    Pretty mode adds a summary header band, zebra rows, right-aligned
+    counts, and a small open/total bar so the eye can compare lists at a
+    glance. Plain keeps a stable aligned table (no ANSI, ASCII bar).
+    """
     if mode == JSON:
         payload = dict(sync_info or {})
         payload["lists"] = list(entries)
@@ -235,14 +254,61 @@ def render_lists(entries, mode, sync_info=None):
     if not entries:
         return "" if mode == PLAIN else f"{_DIM}(no lists){_RESET}"
 
-    width = max(len(entry["title"]) for entry in entries)
-    lines = []
-    for entry in entries:
-        counts = f"{entry['undone']}/{entry['total']}"
-        if mode == PLAIN:
-            lines.append(f"{entry['title'].ljust(width)}  {counts}")
+    title_width = max(len(entry["title"]) for entry in entries)
+    # "N/M" column width shared by plain and pretty so counts line up.
+    ratio_width = max(
+        len(f"{e['undone']}/{e['total']}") for e in entries
+    )
+    bar_width = 10
+
+    def row_text(entry, pretty):
+        title = entry["title"].ljust(title_width)
+        ratio = f"{entry['undone']}/{entry['total']}".rjust(ratio_width)
+        bar = _progress_bar(entry["undone"], entry["total"], width=bar_width)
+        if not pretty:
+            return f"{title}  {ratio}  {bar}"
+
+        # Dim lists with nothing open; bold the name when there is work so
+        # the scan path is "bright names = attention".
+        idle = entry["undone"] == 0
+        if idle:
+            title_s = f"{_DIM}{title}{_RESET}"
+            ratio_s = f"{_DIM}{ratio}{_RESET}"
+            bar_s = f"{_DIM}{bar}{_RESET}"
         else:
-            lines.append(
-                f"{entry['title'].ljust(width)}  {_DIM}{counts}{_RESET}"
-            )
-    return "\n".join(lines)
+            title_s = f"{_BOLD}{title}{_RESET}"
+            # Split N/M so the open count stays bright and the total recedes.
+            open_part = str(entry["undone"])
+            total_part = str(entry["total"])
+            core = f"{open_part}{_DIM}/{total_part}{_RESET}"
+            pad = max(0, ratio_width - len(f"{open_part}/{total_part}"))
+            ratio_s = (" " * pad) + core
+            bar_s = f"{_DIM}{bar}{_RESET}"
+        return f"{title_s}  {ratio_s}  {bar_s}"
+
+    if mode == PLAIN:
+        return "\n".join(row_text(entry, pretty=False) for entry in entries)
+
+    # Pretty: summary header + zebra body, shared paint width.
+    total_open = sum(entry["undone"] for entry in entries)
+    total_tasks = sum(entry["total"] for entry in entries)
+    n_lists = len(entries)
+    summary = (
+        f"{_BOLD}Lists{_RESET}  "
+        f"{_DIM}·  {n_lists} list{'s' if n_lists != 1 else ''}"
+        f"  ·  {total_open} open"
+        f"  ·  {total_tasks} total{_RESET}"
+    )
+
+    body = [row_text(entry, pretty=True) for entry in entries]
+    content_width = max(
+        [_visible_len(summary), *(_visible_len(line) for line in body)],
+        default=0,
+    )
+    width = max(content_width, min(_term_width(), 120))
+
+    painted = [_paint_bg(summary, _BG_HEADER, width)]
+    for i, line in enumerate(body):
+        bg = _BG_ZEBRA if i % 2 == 1 else ""
+        painted.append(_paint_bg(line, bg, width) if bg else line)
+    return "\n".join(painted)
