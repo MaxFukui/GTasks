@@ -619,7 +619,8 @@ class TestDoneHappyPath(_DoneCase):
         code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 0)
-        self.assertIn('marked "Ship CLI" done', out)
+        self.assertIn("done", out)
+        self.assertIn("Ship CLI", out)
         self.assertIn("synced", out)
         self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
         self.assertEqual(len(google.tasks().patch_calls), 1)
@@ -640,7 +641,8 @@ class TestDoneHappyPath(_DoneCase):
         code, out, _ = self.run_cli(["done", self._short("t1")[:3]])
 
         self.assertEqual(code, 0)
-        self.assertIn('marked "Ship CLI" done', out)
+        self.assertIn("Ship CLI", out)
+        self.assertIn("synced", out)
 
     def test_cascades_to_subtasks_like_the_tui_does(self):
         data = {
@@ -682,7 +684,8 @@ class TestDoneAlreadyDone(_DoneCase):
         code, out, _ = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 0)
-        self.assertIn('"Ship CLI" is already done', out)
+        self.assertIn("already done", out)
+        self.assertIn("nothing to push", out)
         self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
         self.assertEqual(len(google.tasks().patch_calls), 0)
 
@@ -788,7 +791,8 @@ class TestDoneAmbiguous(_DoneCase):
         code, out, err = self.run_cli_with_stdin(["done", "aaa"], "2\n")
 
         self.assertEqual(code, 0)
-        self.assertIn('marked "Beta" done', out)
+        self.assertIn("Beta", out)
+        self.assertIn("synced", out)
         by_id = {t["id"]: t for t in data["tasks"]["L1"]}
         self.assertEqual(by_id["t1"]["status"], "needsAction")
         self.assertEqual(by_id["t2"]["status"], "completed")
@@ -834,7 +838,8 @@ class TestDoneSyncFailure(_DoneCase):
         code, out, err = self.run_cli(["done", self._short("t1")])
 
         self.assertEqual(code, 1)
-        self.assertIn('marked "Ship CLI" done locally', out)
+        self.assertIn("Ship CLI", out)
+        self.assertIn("locally", out)
         self.assertIn("could not reach Google", err)
         self.assertIn("it will push next time you open the TUI", err)
         # sync_to_google() only calls save_local_data() as its very last
@@ -926,7 +931,8 @@ class TestStarUnstar(_DoneCase):
         code, out, _ = self.run_cli(["star", self._short("t1")])
 
         self.assertEqual(code, 0)
-        self.assertIn('starred "Ship CLI"', out)
+        self.assertIn("star", out)
+        self.assertIn("Ship CLI", out)
         self.assertIn("synced", out)
         self.assertTrue(data["tasks"]["L1"][0]["title"].startswith("⭐"))
         self.assertEqual(len(google.tasks().patch_calls), 1)
@@ -947,6 +953,7 @@ class TestStarUnstar(_DoneCase):
 
         self.assertEqual(code, 0)
         self.assertIn("already starred", out)
+        self.assertIn("nothing to push", out)
         self.assertEqual(len(google.tasks().patch_calls), 0)
 
     def test_unstar_removes_favorite_and_syncs(self):
@@ -965,7 +972,8 @@ class TestStarUnstar(_DoneCase):
         code, out, _ = self.run_cli(["unstar", self._short("t1")])
 
         self.assertEqual(code, 0)
-        self.assertIn('unstarred "Ship CLI"', out)
+        self.assertIn("unstar", out)
+        self.assertIn("Ship CLI", out)
         self.assertEqual(data["tasks"]["L1"][0]["title"], "Ship CLI")
         self.assertEqual(google.tasks().patch_calls[0][2]["title"], "Ship CLI")
 
@@ -983,8 +991,131 @@ class TestStarUnstar(_DoneCase):
         code, out, _ = self.run_cli(["unstar", self._short("t1")])
 
         self.assertEqual(code, 0)
-        self.assertIn("is not starred", out)
+        self.assertIn("not starred", out)
+        self.assertIn("nothing to push", out)
         self.assertEqual(len(google.tasks().patch_calls), 0)
+
+    def test_star_batch_one_sync_and_receipt(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "⭐Beta", "status": "needsAction"},
+                {"id": "t3", "title": "Gamma", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "⭐Beta", "status": "needsAction"},
+                {"id": "t3", "title": "Gamma", "status": "needsAction"},
+            ],
+        })
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli([
+            "star",
+            self._short("t1"),
+            self._short("t2"),
+            self._short("t3"),
+        ])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Alpha", out)
+        self.assertIn("Beta", out)
+        self.assertIn("already starred", out)
+        self.assertIn("Gamma", out)
+        self.assertIn("2 starred, 1 skipped", out)
+        self.assertIn("synced", out)
+        # One sync pass may patch each changed task once.
+        self.assertEqual(len(google.tasks().patch_calls), 2)
+        by_id = {t["id"]: t for t in data["tasks"]["L1"]}
+        self.assertTrue(by_id["t1"]["title"].startswith("⭐"))
+        self.assertTrue(by_id["t2"]["title"].startswith("⭐"))
+        self.assertTrue(by_id["t3"]["title"].startswith("⭐"))
+
+
+class TestDoneBatch(_DoneCase):
+    def test_done_batch_resolves_applies_and_syncs_once(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "Beta", "status": "completed"},
+                {"id": "t3", "title": "Gamma", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+                {"id": "t2", "title": "Beta", "status": "completed"},
+                {"id": "t3", "title": "Gamma", "status": "needsAction"},
+            ],
+        })
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli([
+            "done",
+            self._short("t1"),
+            self._short("t2"),
+            self._short("t3"),
+        ])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Alpha", out)
+        self.assertIn("already done", out)
+        self.assertIn("Gamma", out)
+        self.assertIn("2 done, 1 skipped", out)
+        self.assertIn("synced", out)
+        self.assertEqual(len(google.tasks().patch_calls), 2)
+        by_id = {t["id"]: t for t in data["tasks"]["L1"]}
+        self.assertEqual(by_id["t1"]["status"], "completed")
+        self.assertEqual(by_id["t2"]["status"], "completed")
+        self.assertEqual(by_id["t3"]["status"], "completed")
+
+    def test_done_batch_invalid_id_changes_nothing(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [{"id": "t1", "title": "Alpha", "status": "needsAction"}],
+        })
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, err = self.run_cli([
+            "done", self._short("t1"), "0000",
+        ])
+
+        self.assertEqual(code, 2)
+        self.assertIn("no task matches", err)
+        self.assertEqual(data["tasks"]["L1"][0]["status"], "needsAction")
+        self.assertEqual(len(google.tasks().patch_calls), 0)
+
+    def test_done_batch_dedupes_same_task(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": [
+                {"id": "t1", "title": "Alpha", "status": "needsAction"},
+            ]},
+        }
+        google = _FakeGoogleService({
+            "L1": [{"id": "t1", "title": "Alpha", "status": "needsAction"}],
+        })
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+        handle = self._short("t1")
+
+        code, out, _ = self.run_cli(["done", handle, handle, handle[:3]])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(out.count("Alpha"), 1)
+        self.assertEqual(len(google.tasks().patch_calls), 1)
 
 
 class TestAdd(_DoneCase):

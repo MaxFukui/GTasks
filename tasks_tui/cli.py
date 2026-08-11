@@ -81,25 +81,49 @@ def _build_parser():
 
     short_id_help = (
         "short id shown next to the task in a listing "
-        f"(at least {shortids.MIN_INPUT_LEN} hex chars; unique prefix ok)"
+        f"(at least {shortids.MIN_INPUT_LEN} hex chars; unique prefix ok). "
+        "Pass several to act on multiple tasks in one go."
     )
 
     done_verb = subparsers.add_parser(
-        "done", help="mark a task done and push it to Google"
+        "done",
+        help="mark one or more tasks done and push to Google",
+        description=(
+            "Mark tasks done by short id. Several ids are resolved first, "
+            "then applied, then pushed in a single sync. Already-done tasks "
+            "are skipped. If any id is invalid or ambiguous (non-interactive), "
+            "nothing is changed."
+        ),
     )
-    done_verb.add_argument("short_id", help=short_id_help)
+    done_verb.add_argument(
+        "short_ids", nargs="+", metavar="SHORT", help=short_id_help
+    )
 
     # star/unstar are the write side of the virtual Favorites list; `fav`
     # remains the read-only listing verb so existing muscle memory is safe.
     star_verb = subparsers.add_parser(
-        "star", help="favorite a task (prefix title with ⭐) and push"
+        "star",
+        help="favorite one or more tasks and push",
+        description=(
+            "Favorite tasks (⭐ title prefix) by short id. Accepts multiple "
+            "ids; one sync at the end. Already-starred tasks are skipped."
+        ),
     )
-    star_verb.add_argument("short_id", help=short_id_help)
+    star_verb.add_argument(
+        "short_ids", nargs="+", metavar="SHORT", help=short_id_help
+    )
 
     unstar_verb = subparsers.add_parser(
-        "unstar", help="remove a task from favorites and push"
+        "unstar",
+        help="remove one or more tasks from favorites and push",
+        description=(
+            "Unfavorite tasks by short id. Accepts multiple ids; one sync "
+            "at the end. Tasks that are not starred are skipped."
+        ),
     )
-    unstar_verb.add_argument("short_id", help=short_id_help)
+    unstar_verb.add_argument(
+        "short_ids", nargs="+", metavar="SHORT", help=short_id_help
+    )
 
     add_verb = subparsers.add_parser(
         "add",
@@ -337,8 +361,11 @@ def _disambiguate(matches, token, data, stdout, stderr, stdin):
     return matches[idx - 1]
 
 
-def _resolve_short_id(raw_token, stdout, stderr, stdin=None):
-    """Resolve a typed short id to (list_id, task_snapshot, cache_data)."""
+def _resolve_short_id(raw_token, stdout, stderr, stdin=None, data=None):
+    """Resolve a typed short id to (list_id, task_snapshot, cache_data).
+
+    Pass `data` to reuse one cache load when resolving a batch.
+    """
     stdin = stdin or sys.stdin
     token = shortids.normalize_token(raw_token)
     if token is None:
@@ -350,9 +377,10 @@ def _resolve_short_id(raw_token, stdout, stderr, stdin=None):
         )
         return None, EXIT_USAGE
 
-    data, _path = _load_cache(stderr)
     if data is None:
-        return None, EXIT_ERROR
+        data, _path = _load_cache(stderr)
+        if data is None:
+            return None, EXIT_ERROR
 
     matches = shortids.resolve(data, token)
     if not matches:
@@ -366,6 +394,45 @@ def _resolve_short_id(raw_token, stdout, stderr, stdin=None):
     else:
         list_id, task = matches[0]
     return (list_id, task, data), EXIT_OK
+
+
+def _resolve_short_ids(raw_tokens, stdout, stderr, stdin=None):
+    """Resolve every token before any mutation (atomic batch).
+
+    Returns (targets, data) where each target is
+    ``{"list_id", "task_id", "handle"}``, de-duplicated by task_id
+    (first mention wins). On any failure returns (None, exit_code) and
+    guarantees nothing was mutated.
+    """
+    data, _path = _load_cache(stderr)
+    if data is None:
+        return None, EXIT_ERROR
+
+    targets = []
+    seen = set()
+    for raw in raw_tokens:
+        resolved, code = _resolve_short_id(
+            raw, stdout, stderr, stdin=stdin, data=data
+        )
+        if resolved is None:
+            return None, code
+        list_id, task, _ = resolved
+        task_id = task.get("id")
+        if not task_id or task_id in seen:
+            continue
+        seen.add(task_id)
+        targets.append(
+            {
+                "list_id": list_id,
+                "task_id": task_id,
+                "handle": shortids.short_id(task_id),
+            }
+        )
+
+    if not targets:
+        print("error: no tasks to act on", file=stderr)
+        return None, EXIT_USAGE
+    return (targets, data), EXIT_OK
 
 
 def _connect_service(stderr):
@@ -408,68 +475,145 @@ def _push_or_save_local(service, title_phrase, stdout, stderr):
     return EXIT_OK
 
 
-def _verb_done(raw_token, stdout, stderr, stdin=None):
-    """Marks the task addressed by a stable short id done and pushes it."""
-    resolved, code = _resolve_short_id(raw_token, stdout, stderr, stdin)
-    if resolved is None:
-        return code
-    list_id, task, _data = resolved
-    task_id = task.get("id")
+def _print_receipt(rows, stdout):
+    """Print per-task receipt lines: (kind, handle, title, detail)."""
+    handle_width = max((len(r[1]) for r in rows), default=4)
+    for kind, handle, title, detail in rows:
+        if kind == "ok":
+            label = detail or "ok"
+            print(
+                f"✓ {label:<8}  {handle:<{handle_width}}  {title}",
+                file=stdout,
+            )
+        else:
+            why = f"  ({detail})" if detail else ""
+            print(
+                f"· skip      {handle:<{handle_width}}  {title}{why}",
+                file=stdout,
+            )
 
-    service, err = _connect_service(stderr)
-    if service is None:
-        return err
 
-    # Re-fetch from the service's own cache view so we act on what will be
-    # synced, not a stale snapshot from the earlier resolve pass.
-    live = service.get_task(list_id, task_id)
-    if live is None or live.get("deleted"):
-        print("task no longer exists; run sync or a listing again", file=stderr)
-        return EXIT_USAGE
+def _batch_push(service, receipt_rows, n_changed, unit, stdout, stderr):
+    """One sync after a batch; receipt already describes per-task results.
 
-    title = queries.display_title(live)
-    if live.get("status") == "completed":
-        print(f'"{title}" is already done', file=stdout)
+    `unit` is a singular noun used in the summary ('done', 'starred', ...).
+    """
+    _print_receipt(receipt_rows, stdout)
+
+    if n_changed == 0:
+        n_skip = sum(1 for r in receipt_rows if r[0] == "skip")
+        print(f"· nothing to push ({n_skip} skipped)", file=stdout)
         return EXIT_OK
 
-    service.toggle_task_status(list_id, task_id)
-    return _push_or_save_local(
-        service, f'marked "{title}" done', stdout, stderr
-    )
-
-
-def _verb_star(raw_token, want_starred, stdout, stderr, stdin=None):
-    """Favorite or unfavorite a task by short id, then push."""
-    resolved, code = _resolve_short_id(raw_token, stdout, stderr, stdin)
-    if resolved is None:
-        return code
-    list_id, task, _data = resolved
-    task_id = task.get("id")
-
-    service, err = _connect_service(stderr)
-    if service is None:
-        return err
-
-    live = service.get_task(list_id, task_id)
-    if live is None or live.get("deleted"):
-        print("task no longer exists; run sync or a listing again", file=stderr)
-        return EXIT_USAGE
-
-    title = queries.display_title(live)
-    already = queries.is_starred(live)
-    if want_starred and already:
-        print(f'"{title}" is already starred', file=stdout)
-        return EXIT_OK
-    if not want_starred and not already:
-        print(f'"{title}" is not starred', file=stdout)
-        return EXIT_OK
-
-    service.set_starred(list_id, task_id, want_starred)
-    if want_starred:
-        phrase = f'starred "{title}"'
+    n_skip = sum(1 for r in receipt_rows if r[0] == "skip")
+    if n_skip:
+        summary = f"{n_changed} {unit}, {n_skip} skipped"
     else:
-        phrase = f'unstarred "{title}"'
-    return _push_or_save_local(service, phrase, stdout, stderr)
+        summary = f"{n_changed} {unit}"
+
+    try:
+        service.sync_to_google()
+    except Exception as exc:
+        saved_locally = service.save_local_data()
+        if saved_locally:
+            print(f"✓ {summary} locally", file=stdout)
+            print(f"✗ could not reach Google: {exc}", file=stderr)
+            print("  it will push next time you open the TUI", file=stderr)
+        else:
+            print(
+                f"✗ could not save locally or reach Google: {exc}",
+                file=stderr,
+            )
+        return EXIT_ERROR
+
+    print(f"✓ {summary} — synced", file=stdout)
+    return EXIT_OK
+
+
+def _verb_done(raw_tokens, stdout, stderr, stdin=None):
+    """Mark one or more tasks done; one sync for the whole batch."""
+    packed, code = _resolve_short_ids(raw_tokens, stdout, stderr, stdin=stdin)
+    if packed is None:
+        return code
+    targets, _data = packed
+
+    service, err = _connect_service(stderr)
+    if service is None:
+        return err
+
+    # Plan against the live service cache before mutating anything.
+    plan = []  # (kind, handle, title, list_id, task_id)
+    for t in targets:
+        live = service.get_task(t["list_id"], t["task_id"])
+        if live is None or live.get("deleted"):
+            print(
+                "task no longer exists; run sync or a listing again",
+                file=stderr,
+            )
+            return EXIT_USAGE
+        title = queries.display_title(live)
+        if live.get("status") == "completed":
+            plan.append(("skip", t["handle"], title, None, None))
+        else:
+            plan.append(("ok", t["handle"], title, t["list_id"], t["task_id"]))
+
+    receipt = []
+    n_changed = 0
+    for kind, handle, title, list_id, task_id in plan:
+        if kind == "skip":
+            receipt.append(("skip", handle, title, "already done"))
+            continue
+        service.toggle_task_status(list_id, task_id)
+        receipt.append(("ok", handle, title, "done"))
+        n_changed += 1
+
+    return _batch_push(service, receipt, n_changed, "done", stdout, stderr)
+
+
+def _verb_star(raw_tokens, want_starred, stdout, stderr, stdin=None):
+    """Favorite or unfavorite one or more tasks; one sync for the batch."""
+    packed, code = _resolve_short_ids(raw_tokens, stdout, stderr, stdin=stdin)
+    if packed is None:
+        return code
+    targets, _data = packed
+
+    service, err = _connect_service(stderr)
+    if service is None:
+        return err
+
+    verb = "starred" if want_starred else "unstarred"
+    skip_why = "already starred" if want_starred else "not starred"
+    ok_label = "star" if want_starred else "unstar"
+
+    plan = []
+    for t in targets:
+        live = service.get_task(t["list_id"], t["task_id"])
+        if live is None or live.get("deleted"):
+            print(
+                "task no longer exists; run sync or a listing again",
+                file=stderr,
+            )
+            return EXIT_USAGE
+        title = queries.display_title(live)
+        already = queries.is_starred(live)
+        if want_starred and already:
+            plan.append(("skip", t["handle"], title, None, None))
+        elif not want_starred and not already:
+            plan.append(("skip", t["handle"], title, None, None))
+        else:
+            plan.append(("ok", t["handle"], title, t["list_id"], t["task_id"]))
+
+    receipt = []
+    n_changed = 0
+    for kind, handle, title, list_id, task_id in plan:
+        if kind == "skip":
+            receipt.append(("skip", handle, title, skip_why))
+            continue
+        service.set_starred(list_id, task_id, want_starred)
+        receipt.append(("ok", handle, title, ok_label))
+        n_changed += 1
+
+    return _batch_push(service, receipt, n_changed, verb, stdout, stderr)
 
 
 def _verb_add(
@@ -657,13 +801,13 @@ def run(argv, stdout=None, stderr=None):
         return _verb_sync(stdout, stderr)
 
     if args.verb == "done":
-        return _verb_done(args.short_id, stdout, stderr)
+        return _verb_done(args.short_ids, stdout, stderr)
 
     if args.verb == "star":
-        return _verb_star(args.short_id, True, stdout, stderr)
+        return _verb_star(args.short_ids, True, stdout, stderr)
 
     if args.verb == "unstar":
-        return _verb_star(args.short_id, False, stdout, stderr)
+        return _verb_star(args.short_ids, False, stdout, stderr)
 
     if args.verb == "add":
         return _verb_add(

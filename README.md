@@ -117,9 +117,10 @@ tasks-tui today            # due today
 tasks-tui overdue          # past due, not done
 tasks-tui search milk      # match title or notes
 tasks-tui sync             # pull fresh data from Google
-tasks-tui done a3f1        # mark task done by its short id and push to Google
-tasks-tui star a3f1        # favorite a task (shows up in fav)
-tasks-tui unstar a3f1      # remove from favorites
+tasks-tui done a3f1              # mark task done by short id and push
+tasks-tui done a3f1 b91c c2e0    # several tasks, one sync
+tasks-tui star a3f1 b91c         # favorite one or more (shows up in fav)
+tasks-tui unstar a3f1            # remove from favorites (also multi)
 tasks-tui add Work "Title"       # create a top-level task (partial list names ok)
 tasks-tui add -s Work Buy milk   # create already favorited
 tasks-tui add -p a3f1 "Child"    # subtask under short id a3f1 (list inferred)
@@ -148,20 +149,26 @@ Work
 b91c  ○ Ship CLI mode        due 2026-08-05
 
 $ tasks-tui done b91c
-✓ marked "Ship CLI mode" done — synced
+✓ done      b91c  Ship CLI mode
+✓ 1 done — synced
+
+$ tasks-tui done a3f1 b91c c2e0
+✓ done      a3f1  Buy milk
+· skip      b91c  Ship CLI mode  (already done)
+✓ done      c2e0  Write tests
+✓ 2 done, 1 skipped — synced
 ```
 
-Running `done` on a task that's already done is a safe no-op — it prints
-`"<title>" is already done` and does not touch Google. Short ids do not
-require re-running a listing first; any task still in the local cache can
-be addressed directly.
+`done`, `star`, and `unstar` accept one or more short ids. All ids are
+resolved first (invalid/ambiguous → exit 2, nothing changes), then
+applied, then pushed in a **single** sync. Already-done / already-starred
+/ not-starred tasks are skipped in the receipt. Short ids do not require
+re-running a listing first; any task still in the local cache works.
 
-`star` / `unstar` use the same short ids and are also no-ops when the task
-is already in the desired state. `add` creates tasks: classic form is
-`add LIST TITLE...`; with `-p SHORT` (or `subadd SHORT TITLE...`) it creates
-a subtask under that parent (list inferred from the parent; Google allows
-only one nesting level). `-s` favorites on create. After sync, a new short
-id is printed when the temporary id is replaced.
+`add` creates tasks: classic form is `add LIST TITLE...`; with `-p SHORT`
+(or `subadd SHORT TITLE...`) it creates a subtask under that parent (list
+inferred; Google allows only one nesting level). `-s` favorites on create.
+After sync, a new short id is printed when the temporary id is replaced.
 
 Completed tasks are hidden by default, independent of the TUI's
 `hide_completed` setting. Output drops colour automatically when piped, and
