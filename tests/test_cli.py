@@ -1272,6 +1272,46 @@ class TestAdd(_DoneCase):
         self.assertEqual(code, 2)
         self.assertIn("parent is in Work, not Home", err)
 
+    def test_add_dash_d_creates_already_done_one_sync(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Events and Deadlines"}],
+            "tasks": {"L1": []},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(
+            ["add", "-d", "-s", "Events", "Learning", "OBS"]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("logged", out)
+        self.assertIn("Learning OBS", out)
+        self.assertIn("synced", out)
+        self.assertEqual(len(google.tasks().insert_calls), 1)
+        self.assertEqual(len(google.tasks().patch_calls), 0)
+        body = google.tasks().insert_calls[0][1]
+        self.assertEqual(body["status"], "completed")
+        self.assertTrue(body["title"].startswith("⭐"))
+        self.assertEqual(data["tasks"]["L1"][0]["status"], "completed")
+
+    def test_log_is_sugar_for_add_dash_d(self):
+        data = {
+            "task_lists": [{"id": "L1", "title": "Work"}],
+            "tasks": {"L1": []},
+        }
+        google = _FakeGoogleService({"L1": []})
+        self._seed_cache(data)
+        self._install_fake_task_service(data, google)
+
+        code, out, _ = self.run_cli(["log", "Work", "Already", "did", "it"])
+
+        self.assertEqual(code, 0)
+        self.assertIn('logged "Already did it" in Work', out)
+        self.assertEqual(google.tasks().insert_calls[0][1]["status"], "completed")
+        self.assertEqual(len(google.tasks().patch_calls), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

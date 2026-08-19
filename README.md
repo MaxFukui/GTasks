@@ -123,6 +123,9 @@ tasks-tui star a3f1 b91c         # favorite one or more (shows up in fav)
 tasks-tui unstar a3f1            # remove from favorites (also multi)
 tasks-tui add Work "Title"       # create a top-level task (partial list names ok)
 tasks-tui add -s Work Buy milk   # create already favorited
+tasks-tui add -d Work "Learning OBS"  # create already done (one sync)
+tasks-tui log Work "Learning OBS"     # same as add -d (Taskwarrior-style)
+tasks-tui add -s -d Events "Learning OBS"
 tasks-tui add -p a3f1 "Child"    # subtask under short id a3f1 (list inferred)
 tasks-tui subadd a3f1 "Child"    # same as add -p (parent-first spelling)
 ```
@@ -168,6 +171,16 @@ re-running a listing first; any task still in the local cache works.
 `add` creates tasks: classic form is `add LIST TITLE...`; with `-p SHORT`
 (or `subadd SHORT TITLE...`) it creates a subtask under that parent (list
 inferred; Google allows only one nesting level). `-s` favorites on create.
+`-d` / `--done` marks the new task completed **before** the single push
+(so you do not need `add` then `done`). `log` is sugar for `add -d` — use
+it when you already finished something that was not on the list:
+
+```
+$ tasks-tui log -s 'Events and Deadlines' 'Learning OBS'
+✓ logged "Learning OBS" in Events and Deadlines (temp…) — synced
+  short id: f1ae
+```
+
 After sync, a new short id is printed when the temporary id is replaced.
 
 Completed tasks are hidden by default, independent of the TUI's

@@ -125,9 +125,40 @@ def _build_parser():
         "short_ids", nargs="+", metavar="SHORT", help=short_id_help
     )
 
+    add_create_flags = (
+        (
+            ("-l", "--list"),
+            {"dest": "list_name", "metavar": "NAME",
+             "help": "list to add to (partial names allowed); optional with -p"},
+        ),
+        (
+            ("-p", "--parent"),
+            {"dest": "parent_short", "metavar": "SHORT",
+             "help": "short id of the parent task (creates a subtask)"},
+        ),
+        (
+            ("-s", "--star"),
+            {"action": "store_true", "dest": "star_new",
+             "help": "also favorite the new task"},
+        ),
+        (
+            ("-d", "--done"),
+            {"action": "store_true", "dest": "mark_done",
+             "help": (
+                 "mark the new task done before push "
+                 "(one sync; same as the log verb)"
+             )},
+        ),
+    )
+
     add_verb = subparsers.add_parser(
         "add",
         help="create a task (top-level or subtask with -p) and push",
+        description=(
+            "Create a task and push it in one sync. Use -d/--done (or the "
+            "log verb) when you already finished the work and only want it "
+            "recorded — no second done + sync."
+        ),
     )
     add_verb.add_argument(
         "words",
@@ -138,18 +169,8 @@ def _build_parser():
             "with -l and/or -p: TITLE... only"
         ),
     )
-    add_verb.add_argument(
-        "-l", "--list", dest="list_name", metavar="NAME",
-        help="list to add to (partial names allowed); optional with -p",
-    )
-    add_verb.add_argument(
-        "-p", "--parent", dest="parent_short", metavar="SHORT",
-        help="short id of the parent task (creates a subtask)",
-    )
-    add_verb.add_argument(
-        "-s", "--star", action="store_true", dest="star_new",
-        help="also favorite the new task",
-    )
+    for flags, kwargs in add_create_flags:
+        add_verb.add_argument(*flags, **kwargs)
 
     # Thin sugar over `add -p`: parent first, then title — same code path.
     subadd_verb = subparsers.add_parser(
@@ -166,6 +187,35 @@ def _build_parser():
         "-s", "--star", action="store_true", dest="star_new",
         help="also favorite the new subtask",
     )
+    subadd_verb.add_argument(
+        "-d", "--done", action="store_true", dest="mark_done",
+        help="mark the new subtask done before push",
+    )
+
+    # Taskwarrior-style log: create already-done (alias of add -d).
+    log_verb = subparsers.add_parser(
+        "log",
+        help="record a finished task (create already done) and push",
+        description=(
+            "Same as add -d/--done: create the task already completed and "
+            "push once. Use when you did something that was not on the list "
+            "and want it in history without a separate done step."
+        ),
+    )
+    log_verb.add_argument(
+        "words",
+        nargs="+",
+        metavar="WORD",
+        help=(
+            "without -l/-p: LIST TITLE... ; "
+            "with -l and/or -p: TITLE... only"
+        ),
+    )
+    for flags, kwargs in add_create_flags:
+        # log is always done — skip the -d flag to avoid a no-op toggle.
+        if flags[0] == "-d":
+            continue
+        log_verb.add_argument(*flags, **kwargs)
 
     return parser
 
@@ -624,6 +674,7 @@ def _verb_add(
     stdout,
     stderr,
     stdin=None,
+    mark_done=False,
 ):
     """Create a top-level task or subtask and push it to Google.
 
@@ -632,6 +683,10 @@ def _verb_add(
       - classic: first word is the list name, the rest is the title
 
     `subadd PARENT TITLE...` is sugar that only sets parent_short + words.
+    `log LIST TITLE...` is sugar for mark_done=True (create already done).
+
+    When mark_done is set, the task is completed in the local cache *before*
+    the single push — no second resolve/sync round-trip.
     """
     words = list(words or [])
     if parent_short or list_name:
@@ -751,9 +806,22 @@ def _verb_add(
         print("error: could not create task", file=stderr)
         return EXIT_ERROR
 
+    if mark_done:
+        # Complete against the temp id while it is still the live key;
+        # sync_to_google will insert with status=completed in one push.
+        service.toggle_task_status(list_id, task.get("id"))
+
     display = queries.display_title(task)
     handle = shortids.short_id(task.get("id"))
-    if parent_title:
+    if mark_done:
+        # "logged" matches Taskwarrior and signals already-done intent.
+        if parent_title:
+            phrase = (
+                f'logged "{display}" under "{parent_title}" in {list_title}'
+            )
+        else:
+            phrase = f'logged "{display}" in {list_title}'
+    elif parent_title:
         phrase = f'added "{display}" under "{parent_title}" in {list_title}'
     else:
         phrase = f'added "{display}" to {list_title}'
@@ -817,6 +885,18 @@ def run(argv, stdout=None, stderr=None):
             args.star_new,
             stdout,
             stderr,
+            mark_done=args.mark_done,
+        )
+
+    if args.verb == "log":
+        return _verb_add(
+            args.words,
+            getattr(args, "list_name", None),
+            getattr(args, "parent_short", None),
+            args.star_new,
+            stdout,
+            stderr,
+            mark_done=True,
         )
 
     if args.verb == "subadd":
@@ -827,6 +907,7 @@ def run(argv, stdout=None, stderr=None):
             star_new=args.star_new,
             stdout=stdout,
             stderr=stderr,
+            mark_done=args.mark_done,
         )
 
     data, path = _load_cache(stderr)
